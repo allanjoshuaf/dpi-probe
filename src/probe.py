@@ -1,5 +1,6 @@
 import socket
 import time
+from src.tests import sni_test
 
 class Probe:
     def __init__(self, target):
@@ -48,9 +49,15 @@ class Probe:
             self.results["http"] = {"status": "error", "detail": str(e)}
             print(f"    [!] Error: {e}")
 
+    def test_sni(self):
+        """Test SNI-based filtering"""
+        results = sni_test.run(self.target)
+        self.results["sni"] = results
+
     def run(self):
         self.test_tcp_rst()
         self.test_plaintext_http()
+        self.test_sni()
         print("\n[*] Done. Raw results:")
         for k, v in self.results.items():
             print(f"    {k}: {v}")
