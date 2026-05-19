@@ -47,7 +47,7 @@ def test_ttl_hop(target_ip: str, port: int = 443, ttl_values: list = None) -> li
             msg = str(e).lower()
             if "ttl" in msg or "time" in msg or "expired" in msg:
                 result["status"] = "ttl_expired"
-                result["note"] = "ICMP TTL exceeded — hop detected"
+                result["note"] = "ICMP TTL exceeded - hop detected"
                 print(f"    TTL {ttl:>3} → ttl_expired  hop detected")
             else:
                 result["status"] = "error"
@@ -73,13 +73,13 @@ def analyze(results: list) -> dict:
 
     if connected and connected[0]["ttl"] <= 3:
         analysis["suspicious"] = True
-        analysis["reason"] = "Connection established at very low TTL — possible local middlebox"
+        analysis["reason"] = "Connection established at very low TTL - possible local middlebox"
 
     if timeouts and connected:
         gap_ttls = [r["ttl"] for r in timeouts if r["ttl"] < connected[0]["ttl"]]
         if gap_ttls:
             analysis["suspicious"] = True
-            analysis["reason"] = f"Silent drop at TTL {gap_ttls} before connection — middlebox interference"
+            analysis["reason"] = f"Silent drop at TTL {gap_ttls} before connection - middlebox interference"
 
     return analysis
 
