@@ -1,6 +1,7 @@
 import socket
 import time
 from src.tests import sni_test
+from src.tests import ttl_test
 
 class Probe:
     def __init__(self, target):
@@ -54,10 +55,16 @@ class Probe:
         results = sni_test.run(self.target)
         self.results["sni"] = results
 
+    def test_ttl(self):
+        """TTL hop analysis to detect middleboxes"""
+        results = ttl_test.run(self.target)
+        self.results["ttl"] = results    
+
     def run(self):
         self.test_tcp_rst()
         self.test_plaintext_http()
         self.test_sni()
+        self.test_ttl()
         print("\n[*] Done. Raw results:")
         for k, v in self.results.items():
             print(f"    {k}: {v}")
