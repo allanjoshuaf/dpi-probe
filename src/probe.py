@@ -4,6 +4,7 @@ from src.tests import sni_test
 from src.tests import ttl_test
 from src.tests import rst_test
 from src.tests import malformed_tls_test
+from src import report
 
 class Probe:
     def __init__(self, target):
@@ -79,6 +80,7 @@ class Probe:
         self.test_ttl()
         self.test_rst()
         self.test_malformed_tls()
-        print("\n[*] Done. Raw results:")
-        for k, v in self.results.items():
-            print(f"    {k}: {v}")
+        r = report.generate(self.target, self.results)
+        report.print_summary(r)
+        path = report.save(r)
+        print(f"\n  Report saved → {path}")
