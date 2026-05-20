@@ -2,6 +2,7 @@ import socket
 import time
 from src.tests import sni_test
 from src.tests import ttl_test
+from src.tests import rst_test
 
 class Probe:
     def __init__(self, target):
@@ -19,10 +20,10 @@ class Probe:
             rtt = round((time.time() - start) * 1000, 2)
             s.close()
             self.results["tcp_443"] = {"status": "open", "rtt_ms": rtt}
-            print(f"    [+] Port 443 open — RTT {rtt}ms")
+            print(f"    [+] Port 443 open - RTT {rtt}ms")
         except socket.timeout:
             self.results["tcp_443"] = {"status": "timeout"}
-            print("    [!] Timeout — possible silent drop by DPI")
+            print("    [!] Timeout - possible silent drop by DPI")
         except ConnectionRefusedError:
             self.results["tcp_443"] = {"status": "refused"}
             print("    [-] Connection refused")
@@ -39,10 +40,10 @@ class Probe:
             s.close()
             if "302" in response or "301" in response:
                 self.results["http"] = {"status": "redirect"}
-                print("    [!] Redirect detected — possible DPI injection")
+                print("    [!] Redirect detected - possible DPI injection")
             elif "reset" in response.lower() or len(response) == 0:
                 self.results["http"] = {"status": "blocked"}
-                print("    [!] Empty response — possible block")
+                print("    [!] Empty response - possible block")
             else:
                 self.results["http"] = {"status": "ok"}
                 print("    [+] HTTP response looks normal")
@@ -58,13 +59,19 @@ class Probe:
     def test_ttl(self):
         """TTL hop analysis to detect middleboxes"""
         results = ttl_test.run(self.target)
-        self.results["ttl"] = results    
+        self.results["ttl"] = results
+
+    def test_rst(self):
+        """RST origin fingerprinting"""
+        results = rst_test.run(self.target)
+        self.results["rst"] = results        
 
     def run(self):
         self.test_tcp_rst()
         self.test_plaintext_http()
         self.test_sni()
         self.test_ttl()
+        self.test_rst()
         print("\n[*] Done. Raw results:")
         for k, v in self.results.items():
             print(f"    {k}: {v}")
