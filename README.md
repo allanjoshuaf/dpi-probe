@@ -1,6 +1,6 @@
 # dpi-probe
 
-A tool to detect and fingerprint DPI (Deep Packet Inspection) middleboxes by analyzing TLS/SNI behavior, TTL hop patterns, and RST origin timing.
+A tool to detect and fingerprint DPI (Deep Packet Inspection) middleboxes by analyzing TLS/SNI behavior, TTL hop patterns, RST origin timing, and malformed TLS responses.
 
 Built and tested from Russia 🇷🇺 - where DPI is part of daily life.
 
@@ -14,6 +14,8 @@ Built and tested from Russia 🇷🇺 - where DPI is part of daily life.
 - Compares server responses to detect silent drops, TLS alerts, and middlebox interference
 - Probes TTL hop behavior to fingerprint invisible middleboxes
 - Measures RST timing to determine if resets come from the real server or an interceptor
+- Sends intentionally malformed TLS ClientHello packets to fingerprint the middlebox parser
+- Generates a scored JSON report with confidence level
 
 ---
 
@@ -57,29 +59,55 @@ The DPI reads the SNI field of every TLS ClientHello and silently drops packets 
 **Finding 3 - Invisible middleboxes**
 On a normal network every intermediate router responds with ICMP TTL Exceeded. Here nothing responds between hop 1 and hop 13 (Cloudflare) or hop 21 (Google). The infrastructure is deliberately silent - engineered to remain invisible to standard network diagnostics.
 
-Cloudflare reaches connection at TTL 13 vs TTL 21 for Google, confirming Cloudflare has edge nodes significantly closer to Russia.
-
 ---
 
 ### Test 3 - RST Origin Fingerprinting
 
 | Target | Baseline RTT | RST Timing | Ratio | Verdict |
 |---|---|---|---|---|
-| 1.1.1.1 | 31.08ms | 10.48ms | 0.34x | **middlebox** |
+| 1.1.1.1 | 31.08ms | 9.65ms | 0.30x | **middlebox** |
 | 8.8.8.8 | 22.32ms | 24.43ms | 1.09x | ambiguous |
 
 **Finding 4 - Middlebox caught responding on 1.1.1.1**
-When sending a request with a blocked Host header toward `1.1.1.1`, the response arrives in 10.48ms - while the baseline RTT to Cloudflare is 31ms. Something physically closer than Cloudflare responded in our place. An interceptor answered before our packet even reached its destination.
-
-On `8.8.8.8` the RST arrives at 1.09x baseline - consistent with Google itself responding. No middlebox visible on that path for RST injection.
-
-**Note:** Chrome maintains persistent TCP connections to Google in the background. Always close your browser before running tests for clean results.
+When sending a request with a blocked Host header toward `1.1.1.1`, the response arrives in 9.65ms while the baseline RTT to Cloudflare is ~31ms. Something physically closer than Cloudflare responded in our place.
 
 ---
 
+### Test 4 - Malformed TLS ClientHello
+
+| Variant | Response | Alert Code | RTT |
+|---|---|---|---|
+| wrong_version | tls_alert | 0x28 (handshake_failure) | 12.15ms |
+| empty_ciphers | tls_alert | 0x32 (decode_error) | 8.09ms |
+| oversized_sni | tls_alert | 0x32 (decode_error) | 9.99ms |
+| truncated | tls_alert | 0x32 (decode_error) | 7.96ms |
+| duplicate_sni | tls_alert | 0x32 (decode_error) | 10.17ms |
+
+**Finding 5 — Middlebox TLS parser fingerprinted**
+All malformed responses arrive in 8-12ms against a 30ms baseline; the middlebox is responding, not Cloudflare. It runs a full TLS parser that understands and correctly codes protocol errors.
+
+---
+
+### Final report output
+
+```
+==================================================
+DPI PROBE REPORT
+Target     : 1.1.1.1
+Timestamp  : 2026-05-20T21:54:28Z
+DPI detected  : YES
+Confidence    : HIGH
+Score         : 10/10
+Findings :
+→ SNI silent drop detected for: instagram.com, facebook.com, twitter.com
+→ Silent drop at TTL [1, 2, 3, 5, 8] before connection - middlebox interference
+→ RST from middlebox response at 9.65ms vs 32.07ms baseline
+→ Malformed TLS responses faster than baseline middlebox TLS parser active
+```
+
 ## Why this matters
 
-These four findings together paint a clear picture: an active, sophisticated, and deliberately opaque DPI infrastructure that filters on SNI, correlates with destination IP reputation, suppresses ICMP to hide its presence, and injects responses faster than the real destination can reply.
+These five findings together confirm an active, sophisticated, and deliberately opaque DPI infrastructure that filters on SNI, correlates with destination IP reputation, suppresses ICMP to hide its presence, injects responses faster than the real destination, and runs a full TLS parser capable of correctly handling malformed packets.
 
 This is exactly the attack surface that **VLESS + Reality** bypasses: by borrowing a legitimate TLS identity, the SNI field becomes meaningless to the inspector.
 
@@ -92,6 +120,8 @@ py main.py <target_ip>
 # or
 python main.py <target_ip>
 ```
+
+A JSON report is automatically saved to the current directory.
 
 ---
 
@@ -108,8 +138,8 @@ python main.py <target_ip>
 - [x] SNI fingerprinting
 - [x] TTL hop analysis
 - [x] RST origin fingerprinting
-- [ ] TLS ClientHello malformation test
-- [ ] JSON report output
+- [x] Malformed TLS ClientHello test
+- [x] JSON report output
 - [ ] Auto-detect local DPI presence
 - [ ] Map hop count vs RTT to estimate middlebox distance
 
