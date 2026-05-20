@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-dpi-probe — DPI detection and fingerprinting tool
+dpi-probe - DPI detection and fingerprinting tool
 """
 
 import sys
