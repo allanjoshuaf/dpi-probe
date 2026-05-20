@@ -1,8 +1,8 @@
 # dpi-probe
 
-A tool to detect and fingerprint DPI (Deep Packet Inspection) middleboxes by analyzing TLS/SNI behavior and TTL hop patterns across different network targets.
+A tool to detect and fingerprint DPI (Deep Packet Inspection) middleboxes by analyzing TLS/SNI behavior, TTL hop patterns, and RST origin timing.
 
-Built and tested from Russia 🇷🇺 — where DPI is part of daily life.
+Built and tested from Russia 🇷🇺 - where DPI is part of daily life.
 
 ---
 
@@ -13,12 +13,13 @@ Built and tested from Russia 🇷🇺 — where DPI is part of daily life.
 - Crafts realistic TLS ClientHello packets with specific SNI values
 - Compares server responses to detect silent drops, TLS alerts, and middlebox interference
 - Probes TTL hop behavior to fingerprint invisible middleboxes
+- Measures RST timing to determine if resets come from the real server or an interceptor
 
 ---
 
-## Real results — Russia, no VPN
+## Real results - Russia, no VPN
 
-### SNI Filtering
+### Test 1 - SNI Filtering
 
 Tested against `1.1.1.1` (Cloudflare) and `8.8.8.8` (Google DNS):
 
@@ -32,38 +33,53 @@ Tested against `1.1.1.1` (Cloudflare) and `8.8.8.8` (Google DNS):
 | twitter.com | silent_drop | silent_drop | ✗ blocked |
 | youtube.com | **tls_alert** | silent_drop | ⚠ partial |
 
-### Finding 1 — SNI filtering is active
+**Finding 1 - SNI filtering is active**
+The DPI reads the SNI field of every TLS ClientHello and silently drops packets for blocked domains regardless of the actual destination IP.
 
-The DPI reads the SNI field of every TLS ClientHello and silently drops packets destined for blocked domains — regardless of the actual destination IP.
+**Finding 2 - SNI + IP correlation**
+`youtube.com` is blocked toward `8.8.8.8` but passes through to `1.1.1.1`. The DPI weighs both SNI and destination IP reputation. Blocking Cloudflare entirely would cause too much collateral damage to legitimate Russian services hosted there.
 
-### Finding 2 — SNI + IP correlation
+---
 
-`youtube.com` is blocked toward `8.8.8.8` (Google) but passes through to `1.1.1.1` (Cloudflare). The DPI weighs both the SNI value and the destination IP reputation. Blocking Cloudflare entirely would cause too much collateral damage to legitimate Russian services hosted there.
+### Test 2 - TTL Hop Analysis
 
-### Finding 3 — Invisible middleboxes via TTL suppression
+| TTL | 1.1.1.1 | 8.8.8.8 |
+|---|---|---|
+| 1 | timeout | timeout |
+| 2 | timeout | timeout |
+| 3 | timeout | timeout |
+| 5 | timeout | timeout |
+| 8 | timeout | timeout |
+| 13 | connected (30ms) | timeout |
+| 21 | connected (7ms) | connected (27ms) |
+| 64 | connected (7ms) | connected (32ms) |
 
-Tested with TTL values from 1 to 64 toward `1.1.1.1`:
+**Finding 3 - Invisible middleboxes**
+On a normal network every intermediate router responds with ICMP TTL Exceeded. Here nothing responds between hop 1 and hop 13 (Cloudflare) or hop 21 (Google). The infrastructure is deliberately silent - engineered to remain invisible to standard network diagnostics.
 
-| TTL | Result |
-|---|---|
-| 1 | timeout |
-| 2 | timeout |
-| 3 | timeout |
-| 5 | timeout |
-| 8 | timeout |
-| 13 | connected (6.78ms) |
-| 21 | connected (24.03ms) |
-| 64 | connected (7.76ms) |
+Cloudflare reaches connection at TTL 13 vs TTL 21 for Google, confirming Cloudflare has edge nodes significantly closer to Russia.
 
-On a normal network, every intermediate router responds with an ICMP TTL Exceeded message — making hops visible and countable. Here, nothing responds between hop 1 and hop 13.
+---
 
-The intermediate infrastructure is **deliberately silent**. This is not a misconfiguration — it is by design. The middleboxes suppressing ICMP are the same ones performing SNI inspection.
+### Test 3 - RST Origin Fingerprinting
+
+| Target | Baseline RTT | RST Timing | Ratio | Verdict |
+|---|---|---|---|---|
+| 1.1.1.1 | 31.08ms | 10.48ms | 0.34x | **middlebox** |
+| 8.8.8.8 | 22.32ms | 24.43ms | 1.09x | ambiguous |
+
+**Finding 4 - Middlebox caught responding on 1.1.1.1**
+When sending a request with a blocked Host header toward `1.1.1.1`, the response arrives in 10.48ms - while the baseline RTT to Cloudflare is 31ms. Something physically closer than Cloudflare responded in our place. An interceptor answered before our packet even reached its destination.
+
+On `8.8.8.8` the RST arrives at 1.09x baseline - consistent with Google itself responding. No middlebox visible on that path for RST injection.
+
+**Note:** Chrome maintains persistent TCP connections to Google in the background. Always close your browser before running tests for clean results.
 
 ---
 
 ## Why this matters
 
-These three findings together confirm an active, sophisticated, and deliberately opaque DPI infrastructure. The filtering is not based on SNI alone — it correlates SNI with destination IP, and the equipment performing this inspection is engineered to remain invisible to standard network diagnostics.
+These four findings together paint a clear picture: an active, sophisticated, and deliberately opaque DPI infrastructure that filters on SNI, correlates with destination IP reputation, suppresses ICMP to hide its presence, and injects responses faster than the real destination can reply.
 
 This is exactly the attack surface that **VLESS + Reality** bypasses: by borrowing a legitimate TLS identity, the SNI field becomes meaningless to the inspector.
 
@@ -82,13 +98,16 @@ python main.py <target_ip>
 ## Stack
 
 - Python 3.11+
-- Raw sockets — no external dependencies
+- Raw sockets - no external dependencies
 
 ---
 
 ## Roadmap
 
-- [ ] TCP RST origin fingerprinting
+- [x] TCP RST behavior test
+- [x] SNI fingerprinting
+- [x] TTL hop analysis
+- [x] RST origin fingerprinting
 - [ ] TLS ClientHello malformation test
 - [ ] JSON report output
 - [ ] Auto-detect local DPI presence
