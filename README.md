@@ -16,10 +16,11 @@ Built and tested from Russia 🇷🇺 - where DPI is part of daily life.
 - Measures RST timing to determine if resets come from the real server or an interceptor
 - Sends intentionally malformed TLS ClientHello packets to fingerprint the middlebox parser
 - Generates a scored JSON report with confidence level
+- Auto-detects local DPI presence without requiring a target argument
 
 ---
 
-## Real results - Russia, no VPN
+## Real results - Russia
 
 ### Test 1 - SNI Filtering
 
@@ -88,6 +89,26 @@ All malformed responses arrive in 8-12ms against a 30ms baseline; the middlebox 
 
 ---
 
+### Test 5 - Auto-detection across 3 network conditions
+
+The most revealing test: running auto-detect under AdGuard VPN, no VPN, and VLESS Reality (Sing-box).
+
+| Condition | SNI drops | RST ratio | DPI detected | Note |
+|---|---|---|---|---|
+| AdGuard VPN | 0/3 | ~0.45x | ✓ yes | Tunnel hides content, not timing |
+| No VPN | 3/3 | ~1.1x | ✓ yes | DPI fully visible |
+| VLESS Reality | 0/3 | 26–394x | ✗ no | Middlebox completely lost |
+
+**Finding 6 - VLESS Reality defeats timing analysis**
+
+AdGuard hides SNI drops but the middlebox RST ratio stays at ~0.45x, the interceptor still responds faster than the real server, revealing its presence through timing alone.
+
+Under VLESS Reality the RST ratio explodes to 26x–394x baseline. The middlebox no longer knows what to intercept or how to respond. It does not just hide the content, it fundamentally changes the network behavior profile to the point where DPI fingerprinting produces no usable signal.
+
+This is the difference between a VPN and a protocol designed to defeat deep inspection.
+
+---
+
 ### Final report output
 
 ```
@@ -107,21 +128,21 @@ Findings :
 
 ## Why this matters
 
-These five findings together confirm an active, sophisticated, and deliberately opaque DPI infrastructure that filters on SNI, correlates with destination IP reputation, suppresses ICMP to hide its presence, injects responses faster than the real destination, and runs a full TLS parser capable of correctly handling malformed packets.
-
-This is exactly the attack surface that **VLESS + Reality** bypasses: by borrowing a legitimate TLS identity, the SNI field becomes meaningless to the inspector.
+These six findings together confirm an active, sophisticated, and deliberately opaque DPI infrastructure that filters on SNI, correlates with destination IP reputation, suppresses ICMP to hide its presence, injects responses faster than the real destination, runs a full TLS parser, and can be partially bypassed by commercial VPNs; but not by VLESS Reality.
 
 ---
 
 ## Usage
 
 ```bash
+# Auto-detect mode - no argument needed
+py main.py
+
+# Full probe against a specific target
 py main.py <target_ip>
-# or
-python main.py <target_ip>
 ```
 
-A JSON report is automatically saved to the current directory.
+A JSON report is automatically saved to the current directory when probing a specific target.
 
 ---
 
@@ -140,7 +161,7 @@ A JSON report is automatically saved to the current directory.
 - [x] RST origin fingerprinting
 - [x] Malformed TLS ClientHello test
 - [x] JSON report output
-- [ ] Auto-detect local DPI presence
+- [x] Auto-detect local DPI presence
 - [ ] Map hop count vs RTT to estimate middlebox distance
 
 ---
