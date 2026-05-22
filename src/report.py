@@ -1,7 +1,6 @@
 import json
 import datetime
 import socket
-
 def generate(target: str, results: dict) -> dict:
     """Build a structured JSON report from probe results"""
 
@@ -31,7 +30,7 @@ def generate(target: str, results: dict) -> dict:
 
     # SNI
     sni_results = results.get("sni", [])
-    blocked = [r for r in sni_results if r["response_type"] == "silent_drop"]
+    blocked = [r for r in sni_results if r.get("dominant_response") == "silent_drop" or r.get("response_type") == "silent_drop"]
     if blocked:
         domains = [r["sni"] for r in blocked]
         findings.append(f"SNI silent drop detected for: {', '.join(domains)}")
@@ -51,15 +50,16 @@ def generate(target: str, results: dict) -> dict:
         score += 3
 
     # Malformed TLS
-    malformed = results.get("malformed_tls", [])
+    malformed = results.get("malformed_tls", []) or []
     tcp_rtt = results.get("tcp_443", {}).get("rtt_ms")
     if tcp_rtt:
         fast_responses = [
             r for r in malformed
-            if r.get("rtt_ms") and r["rtt_ms"] < tcp_rtt * 0.6
+            if r.get("rtt_stats", {}).get("median_ms") and
+            r["rtt_stats"]["median_ms"] < tcp_rtt * 0.6
         ]
         if fast_responses:
-            findings.append(f"Malformed TLS responses faster than baseline middlebox TLS parser active")
+            findings.append("Malformed TLS responses faster than baseline middlebox TLS parser active")
             score += 3
 
     # Confidence

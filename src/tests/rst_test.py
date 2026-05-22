@@ -98,5 +98,57 @@ def test_rst_origin(target_ip: str, port: int = 443, timeout: float = 3.0) -> di
 
     return result
 
-def run(target_ip: str):
-    return test_rst_origin(target_ip)
+def run(target_ip: str, samples: int = 1):
+    from src.stats import summarize
+
+    print("\n[*] RST Origin Fingerprinting")
+    print(f"    Target  : {target_ip}:443")
+    print(f"    Samples : {samples}\n")
+
+    baseline_rtts = []
+    rst_rtts = []
+    verdicts = []
+
+    for i in range(samples):
+        r = test_rst_origin(target_ip)
+        baseline_rtts.append(r.get("rtt_ms"))
+        rst_rtts.append(r.get("rst_timing_ms"))
+        verdicts.append(r.get("verdict"))
+
+    baseline_stats = summarize(baseline_rtts)
+    rst_stats = summarize(rst_rtts)
+    verdict_counts = {}
+    for v in verdicts:
+        if v:
+            verdict_counts[v] = verdict_counts.get(v, 0) + 1
+    dominant_verdict = max(verdict_counts, key=verdict_counts.get) if verdict_counts else "unknown"
+
+    ratio = None
+    if baseline_stats["median_ms"] and rst_stats["median_ms"]:
+        ratio = round(rst_stats["median_ms"] / baseline_stats["median_ms"], 2)
+
+    observation = "unknown"
+    if ratio:
+        if ratio < 0.5:
+            observation = "consistent_with_rst_injection"
+        elif ratio < 1.5:
+            observation = "ambiguous"
+        else:
+            observation = "consistent_with_server_rst"
+
+    print(f"    Baseline RTT  : {baseline_stats['median_ms']}ms median")
+    print(f"    RST timing    : {rst_stats['median_ms']}ms median")
+    print(f"    Ratio         : {ratio}x")
+    print(f"    Verdict       : {dominant_verdict} ({int(verdict_counts.get(dominant_verdict, 0) / samples * 100)}% of runs)")
+    print(f"    Observation   : {observation}")
+
+    return {
+        "target": target_ip,
+        "samples": samples,
+        "baseline_rtt": baseline_stats,
+        "rst_timing": rst_stats,
+        "ratio": ratio,
+        "dominant_verdict": dominant_verdict,
+        "verdict_breakdown": {k: round(v / samples, 2) for k, v in verdict_counts.items()},
+        "observation": observation,
+    }

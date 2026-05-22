@@ -2,7 +2,7 @@ import socket
 import struct
 import time
 
-def test_ttl_hop(target_ip: str, port: int = 443, ttl_values: list = None) -> list:
+def test_ttl_hop(target_ip: str, port: int = 443, ttl_values: list = None, silent: bool = False) -> list:
     """
     Send TCP SYN packets with increasing TTL values.
     If a middlebox intercepts, it will respond before the real server.
@@ -12,8 +12,9 @@ def test_ttl_hop(target_ip: str, port: int = 443, ttl_values: list = None) -> li
 
     results = []
 
-    print("\n[*] TTL Hop Test")
-    print(f"    Target : {target_ip}:{port}\n")
+    if not silent:
+        print(f"\n[*] TTL Hop Test")
+        print(f"    Target : {target_ip}:{port}\n")
 
     for ttl in ttl_values:
         result = {
@@ -36,23 +37,27 @@ def test_ttl_hop(target_ip: str, port: int = 443, ttl_values: list = None) -> li
             result["status"] = "connected"
             result["rtt_ms"] = rtt
             result["note"] = "reached destination"
-            print(f"    TTL {ttl:>3} → connected    RTT {rtt}ms")
+            if not silent:
+                print(f"    TTL {ttl:>3} → connected    RTT {rtt}ms")
 
         except socket.timeout:
             result["status"] = "timeout"
             result["note"] = "dropped in transit"
-            print(f"    TTL {ttl:>3} → timeout      dropped in transit")
+            if not silent:
+                print(f"    TTL {ttl:>3} → timeout      dropped in transit")
 
         except OSError as e:
             msg = str(e).lower()
             if "ttl" in msg or "time" in msg or "expired" in msg:
                 result["status"] = "ttl_expired"
                 result["note"] = "ICMP TTL exceeded - hop detected"
-                print(f"    TTL {ttl:>3} → ttl_expired  hop detected")
+                if not silent:
+                    print(f"    TTL {ttl:>3} → ttl_expired  hop detected")
             else:
                 result["status"] = "error"
                 result["note"] = str(e)
-                print(f"    TTL {ttl:>3} → error        {e}")
+                if not silent:
+                    print(f"    TTL {ttl:>3} → error        {e}")
 
         results.append(result)
 
@@ -83,12 +88,63 @@ def analyze(results: list) -> dict:
 
     return analysis
 
-def run(target_ip: str):
-    results = test_ttl_hop(target_ip)
-    analysis = analyze(results)
+def run(target_ip: str, samples: int = 1):
+    from src.stats import summarize
 
-    print("\n[*] TTL Analysis")
-    for k, v in analysis.items():
-        print(f"    {k:<25} : {v}")
+    print("\n[*] TTL Hop Test")
+    print(f"    Target  : {target_ip}:443")
+    print(f"    Samples : {samples}\n")
 
-    return {"hops": results, "analysis": analysis}
+    ttl_values = [1, 2, 3, 5, 8, 13, 21, 64]
+    ttl_results = {}
+
+    for ttl in ttl_values:
+        rtts = []
+        statuses = []
+
+        for _ in range(samples):
+            r = test_ttl_hop(target_ip, ttl_values=[ttl], silent=True)
+            if r:
+                rtts.append(r[0]["rtt_ms"])
+                statuses.append(r[0]["status"])
+
+        stats = summarize(rtts)
+        status_counts = {}
+        for s in statuses:
+            if s:
+                status_counts[s] = status_counts.get(s, 0) + 1
+        dominant = max(status_counts, key=status_counts.get) if status_counts else "unknown"
+
+        ttl_results[ttl] = {
+            "dominant_status": dominant,
+            "status_breakdown": {k: round(v / samples, 2) for k, v in status_counts.items()},
+            "rtt_stats": stats,
+        }
+
+        if dominant == "connected":
+            print(f"    TTL {ttl:>3} → connected    {stats['median_ms']}ms median")
+        else:
+            print(f"    TTL {ttl:>3} → {dominant:<12} dropped in transit")
+
+    # Analysis
+    connected_ttls = [ttl for ttl, r in ttl_results.items() if r["dominant_status"] == "connected"]
+    timeout_ttls   = [ttl for ttl, r in ttl_results.items() if r["dominant_status"] == "timeout"]
+
+    min_ttl = min(connected_ttls) if connected_ttls else None
+    suspicious = bool(timeout_ttls and connected_ttls)
+
+    observation = "consistent_with_icmp_suppression" if suspicious else "no_ttl_anomaly"
+
+    analysis = {
+        "min_ttl_to_connect": min_ttl,
+        "silent_ttls": timeout_ttls,
+        "suspicious": suspicious,
+        "observation": observation,
+    }
+
+    print(f"\n[*] TTL Analysis")
+    print(f"    min_ttl_to_connect : {min_ttl}")
+    print(f"    silent_ttls        : {timeout_ttls}")
+    print(f"    observation        : {observation}")
+
+    return {"hops": ttl_results, "analysis": analysis}

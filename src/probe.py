@@ -7,8 +7,9 @@ from src.tests import malformed_tls_test
 from src import report
 
 class Probe:
-    def __init__(self, target):
+    def __init__(self, target, samples=1):
         self.target = target
+        self.samples = samples
         self.results = {}
 
     def test_tcp_rst(self):
@@ -55,22 +56,22 @@ class Probe:
 
     def test_sni(self):
         """Test SNI-based filtering"""
-        results = sni_test.run(self.target)
+        results = sni_test.run(self.target, self.samples)
         self.results["sni"] = results
 
     def test_ttl(self):
         """TTL hop analysis to detect middleboxes"""
-        results = ttl_test.run(self.target)
+        results = ttl_test.run(self.target, self.samples)
         self.results["ttl"] = results
 
     def test_rst(self):
         """RST origin fingerprinting"""
-        results = rst_test.run(self.target)
+        results = rst_test.run(self.target, self.samples)
         self.results["rst"] = results        
 
     def test_malformed_tls(self):
         """Malformed TLS ClientHello fingerprinting"""
-        results = malformed_tls_test.run(self.target)
+        results = malformed_tls_test.run(self.target, self.samples)
         self.results["malformed_tls"] = results
 
     def run(self):
