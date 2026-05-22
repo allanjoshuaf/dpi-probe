@@ -1,6 +1,6 @@
 # dpi-probe
 
-A tool to detect and fingerprint DPI (Deep Packet Inspection) middleboxes by analyzing TLS/SNI behavior, TTL hop patterns, RST origin timing, and malformed TLS responses.
+A tool to detect and fingerprint traffic interference on the local network path. It tests whether TLS SNI, destination IP, HTTP Host headers, malformed TLS payloads, or TCP resets are being filtered, dropped, injected, or modified by a DPI/middlebox.
 
 Built and tested from Russia 🇷🇺 - where DPI is part of daily life.
 
@@ -155,14 +155,46 @@ A JSON report is automatically saved to the current directory when probing a spe
 
 ## Roadmap
 
-- [x] TCP RST behavior test
+### Phase 1 - Core probes
+- [x] TCP 443 reachability test
+- [x] Plain HTTP behavior test
 - [x] SNI fingerprinting
 - [x] TTL hop analysis
-- [x] RST origin fingerprinting
-- [x] Malformed TLS ClientHello test
+- [x] RST timing fingerprinting
+- [x] Malformed TLS ClientHello probes
 - [x] JSON report output
-- [x] Auto-detect local DPI presence
+
+### Phase 2 - Reliability
+- [x] Repeat each probe with configurable sample count
+- [x] Report median, p95, timeout rate, and variance
+- [ ] Add clean/blocked domain lists from config files
+- [ ] Test multiple destination IPs in one run
+- [ ] Separate raw observations from interpretations
+- [ ] Replace single score with per-signal confidence levels
+
+### Phase 3 - DPI classification
+- [ ] Detect SNI-based filtering
+- [ ] Detect IP-based blocking
+- [ ] Detect HTTP Host header filtering
+- [ ] Detect silent drops
+- [ ] Detect RST injection
+- [ ] Detect TLS parser interference
+- [ ] Detect SNI + destination-IP correlation
+
+### Phase 4 - Fingerprinting
+- [ ] Capture response TTL where supported
+- [ ] Compare suspicious response TTL vs baseline response TTL
 - [ ] Map hop count vs RTT to estimate middlebox distance
+- [ ] Add optional PCAP capture/export
+- [ ] Fingerprint TLS alert behavior by malformed ClientHello variant
+- [ ] Compare HTTP vs HTTPS behavior on the same target set
+
+### Phase 5 - Usability
+- [x] Auto-detect local DPI/interference profile
+- [ ] Add CLI options for targets, ports, samples, timeouts, and config files
+- [ ] Generate human-readable text report
+- [ ] Generate machine-readable JSON report with stable schema
+- [ ] Add `--quick`, `--full`, and `--stealth` modes
 
 ---
 
