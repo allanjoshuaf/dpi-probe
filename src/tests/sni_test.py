@@ -6,6 +6,7 @@ KNOWN_BLOCKED = [
     "instagram.com",
     "facebook.com", 
     "twitter.com",
+    "x.com",
     "youtube.com",
 ]
 
@@ -13,6 +14,8 @@ KNOWN_CLEAN = [
     "google.com",
     "github.com",
     "cloudflare.com",
+    "yandex.ru",
+    "rutube.ru"
 ]
 
 def build_tls_client_hello(sni: str) -> bytes:
@@ -165,19 +168,24 @@ def test_sni(target_ip: str, sni: str, port: int = 443, timeout: float = 4.0) ->
 
     return result
 
-def run(target_ip: str, samples: int = 1):
+def run(target_ip: str, samples: int = 1, config: dict = None):
     from src.stats import summarize, summarize_status
+    from src.config import DEFAULT_CONFIG
+
+    cfg = config or DEFAULT_CONFIG
+    blocked = cfg["domains"]["blocked"]
+    clean = cfg["domains"]["clean"]
 
     print("\n[*] SNI Fingerprinting Test")
     print(f"    Target IP : {target_ip}")
-    print(f"    Testing {len(KNOWN_BLOCKED)} blocked + {len(KNOWN_CLEAN)} clean domains")
+    print(f"    Testing {len(blocked)} blocked + {len(clean)} clean domains")
     print(f"    Samples   : {samples}\n")
 
     results = []
 
-    for sni in KNOWN_CLEAN + KNOWN_BLOCKED:
-        label = "CLEAN   " if sni in KNOWN_CLEAN else "BLOCKED?"
-        
+    for sni in clean + blocked:
+        label = "CLEAN   " if sni in clean else "BLOCKED?"
+
         rtts = []
         statuses = []
 
@@ -189,7 +197,7 @@ def run(target_ip: str, samples: int = 1):
         stats = summarize(rtts)
         status_summary = summarize_status(statuses)
         dominant = status_summary["dominant"]
-        indicator = "✓" if dominant == "server_hello" or dominant == "tls_alert" else "✗"
+        indicator = "✓" if dominant in ["server_hello", "tls_alert"] else "✗"
 
         if samples == 1:
             print(f"    [{indicator}] {label} {sni:<25} → {dominant} ({rtts[0]}ms)")
@@ -198,7 +206,7 @@ def run(target_ip: str, samples: int = 1):
 
         results.append({
             "sni": sni,
-            "category": "clean" if sni in KNOWN_CLEAN else "blocked",
+            "category": "clean" if sni in clean else "blocked",
             "dominant_response": dominant,
             "status_breakdown": status_summary["breakdown"],
             "rtt_stats": stats,

@@ -1,0 +1,23 @@
+{
+  "targets": [
+    {"ip": "1.1.1.1", "name": "Cloudflare DNS"},
+    {"ip": "8.8.8.8", "name": "Google DNS"},
+    {"ip": "9.9.9.9", "name": "Quad9 DNS"}
+  ],
+  "domains": {
+    "blocked": [
+      "instagram.com",
+      "facebook.com",
+      "twitter.com",
+      "youtube.com",
+      "x.com"
+    ],
+    "clean": [
+      "google.com",
+      "github.com",
+      "cloudflare.com",
+      "yandex.ru",
+      "rutube.ru"
+    ]
+  }
+}

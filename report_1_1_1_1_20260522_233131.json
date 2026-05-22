@@ -1,0 +1,491 @@
+{
+  "meta": {
+    "target": "1.1.1.1",
+    "timestamp": "2026-05-22T23:31:31.355138Z",
+    "tool": "dpi-probe",
+    "version": "0.1.0"
+  },
+  "summary": {
+    "dpi_detected": true,
+    "confidence": "medium",
+    "findings": [
+      "SNI silent drop detected for: instagram.com, facebook.com, twitter.com, x.com",
+      "TTL anomaly detected",
+      "Malformed TLS responses faster than baseline middlebox TLS parser active"
+    ],
+    "score": 7
+  },
+  "tests": {
+    "tcp_443": {
+      "status": "open",
+      "rtt_ms": 26.2
+    },
+    "http": {
+      "status": "ok"
+    },
+    "sni": [
+      {
+        "sni": "google.com",
+        "category": "clean",
+        "dominant_response": "tls_alert",
+        "status_breakdown": {
+          "tls_alert": 1.0
+        },
+        "rtt_stats": {
+          "samples": 3,
+          "median_ms": 9.29,
+          "mean_ms": 12.75,
+          "p95_ms": 20.99,
+          "stdev_ms": 7.17,
+          "min_ms": 7.97,
+          "max_ms": 20.99,
+          "timeout_rate": 0.0
+        },
+        "observation": "no_filtering_observed"
+      },
+      {
+        "sni": "github.com",
+        "category": "clean",
+        "dominant_response": "tls_alert",
+        "status_breakdown": {
+          "tls_alert": 1.0
+        },
+        "rtt_stats": {
+          "samples": 3,
+          "median_ms": 19.01,
+          "mean_ms": 15.55,
+          "p95_ms": 20.13,
+          "stdev_ms": 6.99,
+          "min_ms": 7.51,
+          "max_ms": 20.13,
+          "timeout_rate": 0.0
+        },
+        "observation": "no_filtering_observed"
+      },
+      {
+        "sni": "cloudflare.com",
+        "category": "clean",
+        "dominant_response": "tls_alert",
+        "status_breakdown": {
+          "tls_alert": 1.0
+        },
+        "rtt_stats": {
+          "samples": 3,
+          "median_ms": 21.97,
+          "mean_ms": 20.48,
+          "p95_ms": 30.84,
+          "stdev_ms": 11.18,
+          "min_ms": 8.63,
+          "max_ms": 30.84,
+          "timeout_rate": 0.0
+        },
+        "observation": "no_filtering_observed"
+      },
+      {
+        "sni": "yandex.ru",
+        "category": "clean",
+        "dominant_response": "tls_alert",
+        "status_breakdown": {
+          "tls_alert": 1.0
+        },
+        "rtt_stats": {
+          "samples": 3,
+          "median_ms": 8.4,
+          "mean_ms": 14.46,
+          "p95_ms": 27.58,
+          "stdev_ms": 11.37,
+          "min_ms": 7.41,
+          "max_ms": 27.58,
+          "timeout_rate": 0.0
+        },
+        "observation": "no_filtering_observed"
+      },
+      {
+        "sni": "rutube.ru",
+        "category": "clean",
+        "dominant_response": "tls_alert",
+        "status_breakdown": {
+          "tls_alert": 1.0
+        },
+        "rtt_stats": {
+          "samples": 3,
+          "median_ms": 7.89,
+          "mean_ms": 12.12,
+          "p95_ms": 20.74,
+          "stdev_ms": 7.47,
+          "min_ms": 7.73,
+          "max_ms": 20.74,
+          "timeout_rate": 0.0
+        },
+        "observation": "no_filtering_observed"
+      },
+      {
+        "sni": "instagram.com",
+        "category": "blocked",
+        "dominant_response": "silent_drop",
+        "status_breakdown": {
+          "silent_drop": 1.0
+        },
+        "rtt_stats": {
+          "samples": 3,
+          "median_ms": 30.75,
+          "mean_ms": 23.27,
+          "p95_ms": 31.22,
+          "stdev_ms": 13.37,
+          "min_ms": 7.83,
+          "max_ms": 31.22,
+          "timeout_rate": 0.0
+        },
+        "observation": "consistent_with_sni_filtering"
+      },
+      {
+        "sni": "facebook.com",
+        "category": "blocked",
+        "dominant_response": "silent_drop",
+        "status_breakdown": {
+          "silent_drop": 1.0
+        },
+        "rtt_stats": {
+          "samples": 3,
+          "median_ms": 30.83,
+          "mean_ms": 30.85,
+          "p95_ms": 31.16,
+          "stdev_ms": 0.31,
+          "min_ms": 30.55,
+          "max_ms": 31.16,
+          "timeout_rate": 0.0
+        },
+        "observation": "consistent_with_sni_filtering"
+      },
+      {
+        "sni": "twitter.com",
+        "category": "blocked",
+        "dominant_response": "silent_drop",
+        "status_breakdown": {
+          "silent_drop": 1.0
+        },
+        "rtt_stats": {
+          "samples": 3,
+          "median_ms": 11.14,
+          "mean_ms": 16.76,
+          "p95_ms": 31.64,
+          "stdev_ms": 13.01,
+          "min_ms": 7.51,
+          "max_ms": 31.64,
+          "timeout_rate": 0.0
+        },
+        "observation": "consistent_with_sni_filtering"
+      },
+      {
+        "sni": "youtube.com",
+        "category": "blocked",
+        "dominant_response": "tls_alert",
+        "status_breakdown": {
+          "tls_alert": 1.0
+        },
+        "rtt_stats": {
+          "samples": 3,
+          "median_ms": 8.01,
+          "mean_ms": 15.41,
+          "p95_ms": 30.24,
+          "stdev_ms": 12.84,
+          "min_ms": 7.99,
+          "max_ms": 30.24,
+          "timeout_rate": 0.0
+        },
+        "observation": "no_filtering_observed"
+      },
+      {
+        "sni": "x.com",
+        "category": "blocked",
+        "dominant_response": "silent_drop",
+        "status_breakdown": {
+          "silent_drop": 1.0
+        },
+        "rtt_stats": {
+          "samples": 3,
+          "median_ms": 8.57,
+          "mean_ms": 9.26,
+          "p95_ms": 11.49,
+          "stdev_ms": 1.97,
+          "min_ms": 7.73,
+          "max_ms": 11.49,
+          "timeout_rate": 0.0
+        },
+        "observation": "consistent_with_sni_filtering"
+      }
+    ],
+    "ttl": {
+      "hops": {
+        "1": {
+          "dominant_status": "timeout",
+          "status_breakdown": {
+            "timeout": 1.0
+          },
+          "rtt_stats": {
+            "samples": 0,
+            "median_ms": null,
+            "mean_ms": null,
+            "p95_ms": null,
+            "stdev_ms": null,
+            "min_ms": null,
+            "max_ms": null,
+            "timeout_rate": 1.0
+          }
+        },
+        "2": {
+          "dominant_status": "timeout",
+          "status_breakdown": {
+            "timeout": 1.0
+          },
+          "rtt_stats": {
+            "samples": 0,
+            "median_ms": null,
+            "mean_ms": null,
+            "p95_ms": null,
+            "stdev_ms": null,
+            "min_ms": null,
+            "max_ms": null,
+            "timeout_rate": 1.0
+          }
+        },
+        "3": {
+          "dominant_status": "timeout",
+          "status_breakdown": {
+            "timeout": 1.0
+          },
+          "rtt_stats": {
+            "samples": 0,
+            "median_ms": null,
+            "mean_ms": null,
+            "p95_ms": null,
+            "stdev_ms": null,
+            "min_ms": null,
+            "max_ms": null,
+            "timeout_rate": 1.0
+          }
+        },
+        "5": {
+          "dominant_status": "timeout",
+          "status_breakdown": {
+            "timeout": 1.0
+          },
+          "rtt_stats": {
+            "samples": 0,
+            "median_ms": null,
+            "mean_ms": null,
+            "p95_ms": null,
+            "stdev_ms": null,
+            "min_ms": null,
+            "max_ms": null,
+            "timeout_rate": 1.0
+          }
+        },
+        "8": {
+          "dominant_status": "timeout",
+          "status_breakdown": {
+            "timeout": 1.0
+          },
+          "rtt_stats": {
+            "samples": 0,
+            "median_ms": null,
+            "mean_ms": null,
+            "p95_ms": null,
+            "stdev_ms": null,
+            "min_ms": null,
+            "max_ms": null,
+            "timeout_rate": 1.0
+          }
+        },
+        "13": {
+          "dominant_status": "connected",
+          "status_breakdown": {
+            "connected": 1.0
+          },
+          "rtt_stats": {
+            "samples": 3,
+            "median_ms": 7.98,
+            "mean_ms": 8.1,
+            "p95_ms": 8.38,
+            "stdev_ms": 0.24,
+            "min_ms": 7.94,
+            "max_ms": 8.38,
+            "timeout_rate": 0.0
+          }
+        },
+        "21": {
+          "dominant_status": "connected",
+          "status_breakdown": {
+            "connected": 1.0
+          },
+          "rtt_stats": {
+            "samples": 3,
+            "median_ms": 7.64,
+            "mean_ms": 7.74,
+            "p95_ms": 8.04,
+            "stdev_ms": 0.27,
+            "min_ms": 7.53,
+            "max_ms": 8.04,
+            "timeout_rate": 0.0
+          }
+        },
+        "64": {
+          "dominant_status": "connected",
+          "status_breakdown": {
+            "connected": 1.0
+          },
+          "rtt_stats": {
+            "samples": 3,
+            "median_ms": 21.7,
+            "mean_ms": 20.1,
+            "p95_ms": 30.8,
+            "stdev_ms": 11.58,
+            "min_ms": 7.81,
+            "max_ms": 30.8,
+            "timeout_rate": 0.0
+          }
+        }
+      },
+      "analysis": {
+        "min_ttl_to_connect": 13,
+        "silent_ttls": [
+          1,
+          2,
+          3,
+          5,
+          8
+        ],
+        "suspicious": true,
+        "observation": "consistent_with_icmp_suppression"
+      }
+    },
+    "rst": {
+      "target": "1.1.1.1",
+      "samples": 3,
+      "baseline_rtt": {
+        "samples": 3,
+        "median_ms": 27.47,
+        "mean_ms": 21.67,
+        "p95_ms": 28.73,
+        "stdev_ms": 11.16,
+        "min_ms": 8.8,
+        "max_ms": 28.73,
+        "timeout_rate": 0.0
+      },
+      "rst_timing": {
+        "samples": 3,
+        "median_ms": 10.07,
+        "mean_ms": 10.02,
+        "p95_ms": 10.13,
+        "stdev_ms": 0.15,
+        "min_ms": 9.85,
+        "max_ms": 10.13,
+        "timeout_rate": 0.0
+      },
+      "ratio": 0.37,
+      "dominant_verdict": "middlebox",
+      "verdict_breakdown": {
+        "middlebox": 0.67,
+        "ambiguous": 0.33
+      },
+      "observation": "consistent_with_rst_injection"
+    },
+    "malformed_tls": [
+      {
+        "variant": "wrong_version",
+        "dominant_response": "tls_alert",
+        "dominant_alert_code": "0x28",
+        "status_breakdown": {
+          "tls_alert": 1.0
+        },
+        "rtt_stats": {
+          "samples": 3,
+          "median_ms": 9.95,
+          "mean_ms": 10.26,
+          "p95_ms": 11.13,
+          "stdev_ms": 0.76,
+          "min_ms": 9.7,
+          "max_ms": 11.13,
+          "timeout_rate": 0.0
+        },
+        "observation": "consistent_with_middlebox_tls_parser"
+      },
+      {
+        "variant": "empty_ciphers",
+        "dominant_response": "tls_alert",
+        "dominant_alert_code": "0x32",
+        "status_breakdown": {
+          "tls_alert": 1.0
+        },
+        "rtt_stats": {
+          "samples": 3,
+          "median_ms": 8.02,
+          "mean_ms": 8.85,
+          "p95_ms": 11.32,
+          "stdev_ms": 2.17,
+          "min_ms": 7.22,
+          "max_ms": 11.32,
+          "timeout_rate": 0.0
+        },
+        "observation": "consistent_with_middlebox_tls_parser"
+      },
+      {
+        "variant": "oversized_sni",
+        "dominant_response": "tls_alert",
+        "dominant_alert_code": "0x32",
+        "status_breakdown": {
+          "tls_alert": 1.0
+        },
+        "rtt_stats": {
+          "samples": 3,
+          "median_ms": 9.02,
+          "mean_ms": 8.81,
+          "p95_ms": 9.52,
+          "stdev_ms": 0.84,
+          "min_ms": 7.89,
+          "max_ms": 9.52,
+          "timeout_rate": 0.0
+        },
+        "observation": "consistent_with_middlebox_tls_parser"
+      },
+      {
+        "variant": "truncated",
+        "dominant_response": "tls_alert",
+        "dominant_alert_code": "0x32",
+        "status_breakdown": {
+          "tls_alert": 1.0
+        },
+        "rtt_stats": {
+          "samples": 3,
+          "median_ms": 7.99,
+          "mean_ms": 8.62,
+          "p95_ms": 10.06,
+          "stdev_ms": 1.25,
+          "min_ms": 7.81,
+          "max_ms": 10.06,
+          "timeout_rate": 0.0
+        },
+        "observation": "consistent_with_middlebox_tls_parser"
+      },
+      {
+        "variant": "duplicate_sni",
+        "dominant_response": "tls_alert",
+        "dominant_alert_code": "0x32",
+        "status_breakdown": {
+          "tls_alert": 1.0
+        },
+        "rtt_stats": {
+          "samples": 3,
+          "median_ms": 8.5,
+          "mean_ms": 8.55,
+          "p95_ms": 9.66,
+          "stdev_ms": 1.09,
+          "min_ms": 7.49,
+          "max_ms": 9.66,
+          "timeout_rate": 0.0
+        },
+        "observation": "consistent_with_middlebox_tls_parser"
+      }
+    ]
+  }
+}

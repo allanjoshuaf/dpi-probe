@@ -5,11 +5,13 @@ from src.tests import ttl_test
 from src.tests import rst_test
 from src.tests import malformed_tls_test
 from src import report
+from src import config as cfg
 
 class Probe:
     def __init__(self, target, samples=1):
         self.target = target
         self.samples = samples
+        self.config = cfg.load()
         self.results = {}
 
     def test_tcp_rst(self):
@@ -56,7 +58,7 @@ class Probe:
 
     def test_sni(self):
         """Test SNI-based filtering"""
-        results = sni_test.run(self.target, self.samples)
+        results = sni_test.run(self.target, self.samples, self.config)
         self.results["sni"] = results
 
     def test_ttl(self):
