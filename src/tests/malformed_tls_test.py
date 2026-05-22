@@ -161,7 +161,9 @@ def probe_variant(target_ip: str, variant: str, port: int = 443, timeout: float 
     return result
 
 
-def run(target_ip: str):
+def run(target_ip: str, samples: int = 1):
+    from src.stats import summarize, summarize_status
+
     variants = [
         "wrong_version",
         "empty_ciphers",
@@ -171,13 +173,43 @@ def run(target_ip: str):
     ]
 
     print("\n[*] Malformed TLS ClientHello Test")
-    print(f"    Target : {target_ip}:443\n")
+    print(f"    Target  : {target_ip}:443")
+    print(f"    Samples : {samples}\n")
 
     results = []
+
     for variant in variants:
-        r = probe_variant(target_ip, variant)
-        indicator = "✓" if r["status"] == "alert" else "⚠" if r["status"] in ["ok", "unknown"] else "✗"
-        print(f"    [{indicator}] {variant:<20} → {r['response_type']:<15} {r['note']}")
-        results.append(r)
+        rtts = []
+        statuses = []
+        raw_bytes = []
+
+        for _ in range(samples):
+            r = probe_variant(target_ip, variant)
+            rtts.append(r.get("rtt_ms"))
+            statuses.append(r.get("response_type"))
+            if r.get("raw_byte"):
+                raw_bytes.append(r["raw_byte"])
+
+        stats = summarize(rtts)
+        status_summary = summarize_status(statuses)
+        dominant = status_summary["dominant"]
+        dominant_byte = max(set(raw_bytes), key=raw_bytes.count) if raw_bytes else None
+
+        indicator = "✓" if dominant == "tls_alert" else "⚠" if dominant in ["server_hello", "unknown"] else "✗"
+
+        if samples == 1:
+            print(f"    [{indicator}] {variant:<20} → {dominant:<15} {dominant_byte or ''}")
+        else:
+            consistency = int(status_summary["breakdown"].get(dominant, 0) * 100)
+            print(f"    [{indicator}] {variant:<20} → {dominant:<15} {stats['median_ms']}ms median  {consistency}% consistent")
+
+        results.append({
+            "variant": variant,
+            "dominant_response": dominant,
+            "dominant_alert_code": dominant_byte,
+            "status_breakdown": status_summary["breakdown"],
+            "rtt_stats": stats,
+            "observation": "consistent_with_middlebox_tls_parser" if stats["median_ms"] and stats["median_ms"] < 15 else "inconclusive",
+        })
 
     return results

@@ -165,18 +165,44 @@ def test_sni(target_ip: str, sni: str, port: int = 443, timeout: float = 4.0) ->
 
     return result
 
-def run(target_ip: str):
+def run(target_ip: str, samples: int = 1):
+    from src.stats import summarize, summarize_status
+
     print("\n[*] SNI Fingerprinting Test")
     print(f"    Target IP : {target_ip}")
-    print(f"    Testing {len(KNOWN_BLOCKED)} blocked + {len(KNOWN_CLEAN)} clean domains\n")
+    print(f"    Testing {len(KNOWN_BLOCKED)} blocked + {len(KNOWN_CLEAN)} clean domains")
+    print(f"    Samples   : {samples}\n")
 
     results = []
 
     for sni in KNOWN_CLEAN + KNOWN_BLOCKED:
-        r = test_sni(target_ip, sni)
         label = "CLEAN   " if sni in KNOWN_CLEAN else "BLOCKED?"
-        indicator = "✓" if r["status"] == "ok" else "✗"
-        print(f"    [{indicator}] {label} {sni:<25} → {r['response_type']} ({r['rtt_ms']}ms)")
-        results.append(r)
+        
+        rtts = []
+        statuses = []
+
+        for _ in range(samples):
+            r = test_sni(target_ip, sni)
+            rtts.append(r["rtt_ms"])
+            statuses.append(r["response_type"])
+
+        stats = summarize(rtts)
+        status_summary = summarize_status(statuses)
+        dominant = status_summary["dominant"]
+        indicator = "✓" if dominant == "server_hello" or dominant == "tls_alert" else "✗"
+
+        if samples == 1:
+            print(f"    [{indicator}] {label} {sni:<25} → {dominant} ({rtts[0]}ms)")
+        else:
+            print(f"    [{indicator}] {label} {sni:<25} → {dominant} ({stats['median_ms']}ms median, {int(status_summary['breakdown'].get(dominant, 0) * 100)}% consistent)")
+
+        results.append({
+            "sni": sni,
+            "category": "clean" if sni in KNOWN_CLEAN else "blocked",
+            "dominant_response": dominant,
+            "status_breakdown": status_summary["breakdown"],
+            "rtt_stats": stats,
+            "observation": "consistent_with_sni_filtering" if dominant == "silent_drop" else "no_filtering_observed",
+        })
 
     return results
