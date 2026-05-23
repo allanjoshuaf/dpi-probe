@@ -85,9 +85,9 @@ The score is conservative by design. Each signal is weighted separately and repo
 
 ---
 
-## Field Results: Russia
+## Field Results: Restrictive Network Path
 
-These are real observations from one Russian network path, included as field evidence. Results are network-path-specific and should not be generalized across ISPs or countries.
+These are real observations from one restrictive network path. Results are path-specific and should not be generalized across ISPs or countries.
 
 ### SNI Filtering
 
