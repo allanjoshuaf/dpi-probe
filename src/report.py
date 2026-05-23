@@ -3,6 +3,7 @@ import datetime
 import socket
 def generate(target: str, results: dict) -> dict:
     report = {
+        "schema_version": "1.0",
         "meta": {
             "target": target,
             "timestamp": datetime.datetime.utcnow().isoformat() + "Z",
@@ -127,10 +128,13 @@ def generate(target: str, results: dict) -> dict:
     return report
 
 def save(report: dict, path: str = None) -> str:
+    import os
+    os.makedirs("reports", exist_ok=True)
+
     if not path:
         target = report["meta"]["target"].replace(".", "_")
         ts = datetime.datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-        path = f"report_{target}_{ts}.json"
+        path = f"reports/report_{target}_{ts}.json"
 
     with open(path, "w") as f:
         json.dump(report, f, indent=2)

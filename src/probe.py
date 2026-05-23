@@ -8,10 +8,10 @@ from src import report
 from src import config as cfg
 
 class Probe:
-    def __init__(self, target, samples=1):
+    def __init__(self, target, samples=1, config=None):
         self.target = target
         self.samples = samples
-        self.config = cfg.load()
+        self.config = config or cfg.load()
         self.results = {}
 
     def test_tcp_rst(self):

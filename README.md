@@ -199,7 +199,7 @@ Reports and packet captures may expose your IP address, ISP, tested domains, tim
 - [x] Per-signal confidence levels
 - [x] Separate observations from interpretations
 - [x] Multi-target probe in one run
-- [ ] Stable JSON schema
+- [x] Stable JSON schema
 
 ### Phase 3 - DPI Classification
 - [ ] IP-based blocking classification

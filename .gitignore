@@ -219,3 +219,4 @@ __marimo__/
 .aider*
 context.md
 report_*.json
+reports/
