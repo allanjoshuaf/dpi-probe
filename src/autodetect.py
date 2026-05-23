@@ -1,19 +1,8 @@
 import socket
 import time
-
-PROBE_TARGETS = [
-    {"ip": "1.1.1.1",  "name": "Cloudflare DNS"},
-    {"ip": "8.8.8.8",  "name": "Google DNS"},
-    {"ip": "9.9.9.9",  "name": "Quad9 DNS"},
-]
-
-CANARY_DOMAINS = {
-    "blocked": ["instagram.com", "facebook.com", "twitter.com"],
-    "clean":   ["google.com", "github.com", "cloudflare.com"],
-}
+from src import config as cfg
 
 def quick_sni_check(target_ip: str, sni: str, timeout: float = 3.0) -> str:
-    """Returns: ok | silent_drop | rst | error"""
     try:
         from src.tests.sni_test import build_tls_client_hello
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -37,8 +26,7 @@ def quick_sni_check(target_ip: str, sni: str, timeout: float = 3.0) -> str:
     except Exception:
         return "error"
 
-def quick_rst_check(target_ip: str, timeout: float = 3.0) -> dict:
-    """Measure baseline RTT vs response RTT to detect middlebox"""
+def quick_rst_check(target_ip: str, blocked_domains: list, timeout: float = 3.0) -> dict:
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         s.settimeout(timeout)
@@ -47,10 +35,12 @@ def quick_rst_check(target_ip: str, timeout: float = 3.0) -> dict:
         baseline = round((time.time() - start) * 1000, 2)
         s.close()
 
+        test_domain = blocked_domains[0] if blocked_domains else "instagram.com"
+
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         s.settimeout(timeout)
         s.connect((target_ip, 443))
-        s.send(b"GET / HTTP/1.0\r\nHost: instagram.com\r\n\r\n")
+        s.send(f"GET / HTTP/1.0\r\nHost: {test_domain}\r\n\r\n".encode())
         start = time.time()
         try:
             s.recv(4096)
@@ -60,47 +50,45 @@ def quick_rst_check(target_ip: str, timeout: float = 3.0) -> dict:
         s.close()
 
         if response_time and baseline:
-            ratio = response_time / baseline
-            return {"baseline": baseline, "response": response_time, "ratio": ratio}
+            return {"baseline": baseline, "response": response_time, "ratio": response_time / baseline}
         return {"baseline": baseline, "response": None, "ratio": None}
     except Exception:
         return {"baseline": None, "response": None, "ratio": None}
 
-def run() -> dict:
+def run(config: dict = None) -> dict:
+    conf = config or cfg.load()
+    targets = conf.get("targets", [])
+    blocked = conf["domains"]["blocked"]
+    clean   = conf["domains"]["clean"]
+
     print("\n[*] Auto-detecting local DPI presence...")
-    print(f"    Testing {len(PROBE_TARGETS)} targets\n")
+    print(f"    Testing {len(targets)} targets\n")
 
     signals = []
     details = []
 
-    for t in PROBE_TARGETS:
+    for t in targets:
         ip   = t["ip"]
         name = t["name"]
         print(f"    [{name} - {ip}]")
 
-        # SNI check
         drops = 0
-        for domain in CANARY_DOMAINS["blocked"]:
-            result = quick_sni_check(ip, domain)
-            if result == "silent_drop":
+        for domain in blocked:
+            if quick_sni_check(ip, domain) == "silent_drop":
                 drops += 1
 
         clean_ok = 0
-        for domain in CANARY_DOMAINS["clean"]:
-            result = quick_sni_check(ip, domain)
-            if result in ["tls_alert", "ok"]:
+        for domain in clean:
+            if quick_sni_check(ip, domain) in ["tls_alert", "ok"]:
                 clean_ok += 1
 
         sni_signal = drops >= 2 and clean_ok >= 2
-        print(f"      SNI drops      : {drops}/{len(CANARY_DOMAINS['blocked'])} blocked domains")
-        print(f"      SNI clean      : {clean_ok}/{len(CANARY_DOMAINS['clean'])} clean domains reachable")
+        print(f"      SNI drops      : {drops}/{len(blocked)} blocked domains")
+        print(f"      SNI clean      : {clean_ok}/{len(clean)} clean domains reachable")
 
-        # RST timing check
-        rst = quick_rst_check(ip)
-        rst_signal = False
-        if rst["ratio"] and rst["ratio"] < 0.5:
-            rst_signal = True
-        print(f"      RST ratio      : {rst['ratio']}x baseline" if rst["ratio"] else "      RST ratio      : N/A")
+        rst = quick_rst_check(ip, blocked)
+        rst_signal = bool(rst["ratio"] and rst["ratio"] < 0.5)
+        print(f"      RST ratio      : {round(rst['ratio'], 2)}x baseline" if rst["ratio"] else "      RST ratio      : N/A")
 
         target_signal = sni_signal or rst_signal
         signals.append(target_signal)
@@ -113,27 +101,25 @@ def run() -> dict:
             "dpi_signal": target_signal,
         })
 
-        status = "⚠ DPI signal" if target_signal else "✓ clean"
-        print(f"      Result         : {status}\n")
+        print(f"      Result         : {'⚠ DPI signal' if target_signal else '✓ clean'}\n")
 
-    # Verdict
     triggered = sum(signals)
     dpi_detected = triggered >= 2
 
     verdict = {
         "dpi_detected": dpi_detected,
         "targets_triggered": triggered,
-        "targets_tested": len(PROBE_TARGETS),
-        "confidence": "high" if triggered == len(PROBE_TARGETS) else "medium" if triggered >= 2 else "low",
+        "targets_tested": len(targets),
+        "confidence": "high" if triggered == len(targets) else "medium" if triggered >= 2 else "low",
         "details": details,
     }
 
     print("=" * 50)
     if dpi_detected:
-        print(f"  ⚠  DPI DETECTED - {triggered}/{len(PROBE_TARGETS)} targets triggered")
+        print(f"  ⚠  DPI DETECTED - {triggered}/{len(targets)} targets triggered")
         print(f"     Confidence : {verdict['confidence'].upper()}")
     else:
-        print(f"  ✓  No DPI detected ({triggered}/{len(PROBE_TARGETS)} targets triggered)")
+        print(f"  ✓  No DPI detected ({triggered}/{len(targets)} targets triggered)")
     print("=" * 50)
 
     return verdict
