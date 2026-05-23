@@ -2,8 +2,6 @@ import json
 import datetime
 import socket
 def generate(target: str, results: dict) -> dict:
-    """Build a structured JSON report from probe results"""
-
     report = {
         "meta": {
             "target": target,
@@ -14,47 +12,75 @@ def generate(target: str, results: dict) -> dict:
         "summary": {
             "dpi_detected": False,
             "confidence": None,
+            "signals": {},
             "findings": [],
         },
         "tests": results,
     }
 
     findings = []
-    score = 0
-
-    # TCP
-    tcp = results.get("tcp_443", {})
-    if tcp.get("status") == "timeout":
-        findings.append("Port 443 silently dropped - possible DPI block")
-        score += 1
+    signals = {}
 
     # SNI
-    sni_results = results.get("sni", [])
-    blocked = [r for r in sni_results if r.get("dominant_response") == "silent_drop" or r.get("response_type") == "silent_drop"]
-    if blocked:
+    sni_results = results.get("sni", []) or []
+    blocked = [r for r in sni_results if r.get("dominant_response") == "silent_drop"]
+    clean_pass = [r for r in sni_results if r.get("category") == "clean" and r.get("dominant_response") in ["tls_alert", "server_hello"]]
+
+    if blocked and clean_pass:
         domains = [r["sni"] for r in blocked]
-        findings.append(f"SNI silent drop detected for: {', '.join(domains)}")
-        score += 2
+        consistency = min([r["status_breakdown"].get("silent_drop", 0) for r in blocked])
+        signals["sni_filtering"] = {
+            "observation": f"silent_drop on {len(blocked)} domain(s): {', '.join(domains)}",
+            "consistency": f"{int(consistency * 100)}%",
+            "confidence": "high" if consistency >= 0.9 else "medium",
+            "weight": 3,
+        }
+        findings.append(f"SNI filtering observed for: {', '.join(domains)}")
+    elif blocked:
+        signals["sni_filtering"] = {
+            "observation": "silent_drop detected but no clean baseline to compare",
+            "confidence": "low",
+            "weight": 1,
+        }
 
     # TTL
     ttl = results.get("ttl", {})
     analysis = ttl.get("analysis", {})
-    if analysis.get("suspicious"):
-        findings.append(analysis.get("reason", "TTL anomaly detected"))
-        score += 2
+    silent_ttls = analysis.get("silent_ttls", [])
+    if silent_ttls and analysis.get("min_ttl_to_connect"):
+        signals["ttl_suppression"] = {
+            "observation": f"No ICMP TTL exceeded on hops {silent_ttls}, first connection at TTL {analysis['min_ttl_to_connect']}",
+            "confidence": "medium",
+            "weight": 2,
+        }
+        findings.append(f"TTL/ICMP behavior consistent with suppression at hops {silent_ttls}")
 
-    #RST
+    # RST
     rst = results.get("rst", {})
-    if rst.get("dominant_verdict") == "middlebox":
-        findings.append(f"RST injection consistent across {rst.get('samples', 1)} samples")
-        score += 3
-    elif rst.get("dominant_verdict") == "ambiguous" and rst.get("ratio") and rst["ratio"] < 0.5:
-        findings.append(f"RST timing suspicious - {rst['ratio']}x baseline")
-        score += 1
+    dominant_verdict = rst.get("dominant_verdict")
+    ratio = rst.get("ratio")
+    if dominant_verdict == "middlebox":
+        signals["rst_timing"] = {
+            "observation": f"Response timing {ratio}x baseline - consistent with closer responder",
+            "confidence": "medium",
+            "weight": 2,
+        }
+        findings.append(f"RST timing consistent with closer responder - {ratio}x baseline")
+    elif dominant_verdict == "ambiguous" and ratio and ratio < 0.5:
+        signals["rst_timing"] = {
+            "observation": f"RST timing {ratio}x baseline - inconclusive without packet capture",
+            "confidence": "low",
+            "weight": 1,
+        }
+    else:
+        signals["rst_timing"] = {
+            "observation": f"RST timing {ratio}x baseline - no anomaly detected",
+            "confidence": "none",
+            "weight": 0,
+        }
 
-    # Malformed TLS - compare against clean SNI median RTT
+    # Malformed TLS
     malformed = results.get("malformed_tls", []) or []
-    sni_results = results.get("sni", []) or []
     clean_rtts = [
         r["rtt_stats"]["median_ms"] for r in sni_results
         if r.get("category") == "clean" and r.get("rtt_stats", {}).get("median_ms")
@@ -62,30 +88,42 @@ def generate(target: str, results: dict) -> dict:
     clean_baseline = sorted(clean_rtts)[len(clean_rtts)//2] if clean_rtts else None
 
     if clean_baseline:
-        fast_responses = [
-            r for r in malformed
-            if r.get("rtt_stats", {}).get("median_ms") and
-            r["rtt_stats"]["median_ms"] < clean_baseline * 0.6
-        ]
-        if fast_responses:
-            findings.append("Malformed TLS responses faster than clean SNI baseline - middlebox TLS parser active")
-            score += 3
+        fast = [r for r in malformed if r.get("rtt_stats", {}).get("median_ms") and r["rtt_stats"]["median_ms"] < clean_baseline * 0.6]
+        if fast:
+            signals["tls_parser"] = {
+                "observation": f"{len(fast)} malformed TLS variant(s) responded faster than clean SNI baseline ({clean_baseline}ms)",
+                "confidence": "medium",
+                "weight": 2,
+            }
+            findings.append("Malformed TLS responses faster than clean SNI baseline - timing consistent with middlebox TLS parser")
+        else:
+            signals["tls_parser"] = {
+                "observation": f"Malformed TLS responses within clean SNI baseline range ({clean_baseline}ms)  inconclusive",
+                "confidence": "low",
+                "weight": 0,
+            }
 
-    # Confidence
-    if score >= 8:
+    # Overall score and confidence
+    total_weight = sum(s["weight"] for s in signals.values())
+    high_signals = [s for s in signals.values() if s["confidence"] == "high"]
+    medium_signals = [s for s in signals.values() if s["confidence"] == "medium"]
+
+    if high_signals and medium_signals:
         confidence = "high"
-    elif score >= 4:
+    elif high_signals or len(medium_signals) >= 2:
         confidence = "medium"
-    else:
+    elif medium_signals:
         confidence = "low"
+    else:
+        confidence = "none"
 
-    report["summary"]["dpi_detected"] = score >= 4
+    report["summary"]["dpi_detected"] = total_weight >= 3
     report["summary"]["confidence"] = confidence
-    report["summary"]["score"] = score
+    report["summary"]["score"] = total_weight
+    report["summary"]["signals"] = signals
     report["summary"]["findings"] = findings
 
     return report
-
 
 def save(report: dict, path: str = None) -> str:
     if not path:
