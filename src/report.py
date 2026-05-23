@@ -119,7 +119,8 @@ def generate(target: str, results: dict) -> dict:
 
     report["summary"]["dpi_detected"] = total_weight >= 3
     report["summary"]["confidence"] = confidence
-    report["summary"]["score"] = total_weight
+    max_score = sum([3, 2, 2, 2])  # SNI + TTL + RST + TLS
+    report["summary"]["score"] = f"{total_weight}/{max_score}"
     report["summary"]["signals"] = signals
     report["summary"]["findings"] = findings
 
@@ -146,7 +147,7 @@ def print_summary(report: dict):
     print("=" * 50)
     print(f"  DPI detected  : {'YES' if s['dpi_detected'] else 'NO'}")
     print(f"  Confidence    : {s['confidence'].upper()}")
-    print(f"  Score         : {s['score']}/10")
+    print(f"  Signal score  : {s['score']}")
     print(f"\n  Findings :")
     for f in s["findings"]:
         print(f"    → {f}")
