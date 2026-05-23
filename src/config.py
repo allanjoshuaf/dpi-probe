@@ -15,7 +15,7 @@ DEFAULT_CONFIG = {
 
 def load(path: str = "targets.json") -> dict:
     if not os.path.exists(path):
-        print(f"[*] No config file found at {path} — using defaults")
+        print(f"[*] No config file found at {path} - using defaults")
         return DEFAULT_CONFIG
 
     try:

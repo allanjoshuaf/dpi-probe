@@ -84,7 +84,7 @@ When sending a request with a blocked Host header toward `1.1.1.1`, the response
 | truncated | tls_alert | 0x32 (decode_error) | 7.96ms |
 | duplicate_sni | tls_alert | 0x32 (decode_error) | 10.17ms |
 
-**Finding 5 — Middlebox TLS parser fingerprinted**
+**Finding 5 - Middlebox TLS parser fingerprinted**
 All malformed responses arrive in 8-12ms against a 30ms baseline; the middlebox is responding, not Cloudflare. It runs a full TLS parser that understands and correctly codes protocol errors.
 
 ---
