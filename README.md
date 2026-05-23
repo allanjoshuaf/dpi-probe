@@ -198,7 +198,7 @@ Reports and packet captures may expose your IP address, ISP, tested domains, tim
 - [x] Config-based clean/blocked domain lists
 - [x] Per-signal confidence levels
 - [x] Separate observations from interpretations
-- [ ] Multi-target probe in one run
+- [x] Multi-target probe in one run
 - [ ] Stable JSON schema
 
 ### Phase 3 - DPI Classification

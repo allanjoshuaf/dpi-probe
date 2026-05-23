@@ -1,0 +1,55 @@
+{
+  "schema_version": "1.0",
+  "description": "dpi-probe report schema",
+  "fields": {
+    "schema_version": "string - report format version",
+    "meta": {
+      "target": "string - probed IP address",
+      "timestamp": "string - ISO 8601 UTC timestamp",
+      "tool": "string - always dpi-probe",
+      "version": "string - tool version"
+    },
+    "summary": {
+      "dpi_detected": "boolean - true if total signal score >= 3",
+      "confidence": "string - none | low | medium | high",
+      "score": "string - weighted signal score e.g. 7/9",
+      "signals": {
+        "sni_filtering": {
+          "observation": "string",
+          "consistency": "string - percentage of samples with same result",
+          "confidence": "string - none | low | medium | high",
+          "weight": "integer - contribution to total score"
+        },
+        "ttl_suppression": {
+          "observation": "string",
+          "confidence": "string",
+          "weight": "integer"
+        },
+        "rst_timing": {
+          "observation": "string",
+          "confidence": "string",
+          "weight": "integer"
+        },
+        "tls_parser": {
+          "observation": "string",
+          "confidence": "string",
+          "weight": "integer"
+        }
+      },
+      "findings": "array of strings - human-readable observations"
+    },
+    "tests": {
+      "tcp_443": {
+        "status": "string - open | timeout | error",
+        "rtt_ms": "number | null"
+      },
+      "http": {
+        "status": "string - ok | redirect | blocked | error"
+      },
+      "sni": "array of SNI test results per domain",
+      "ttl": "TTL hop analysis results",
+      "rst": "RST origin fingerprinting results",
+      "malformed_tls": "array of malformed ClientHello test results"
+    }
+  }
+}
