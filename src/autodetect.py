@@ -76,7 +76,7 @@ def run() -> dict:
     for t in PROBE_TARGETS:
         ip   = t["ip"]
         name = t["name"]
-        print(f"    [{name} — {ip}]")
+        print(f"    [{name} - {ip}]")
 
         # SNI check
         drops = 0
@@ -130,7 +130,7 @@ def run() -> dict:
 
     print("=" * 50)
     if dpi_detected:
-        print(f"  ⚠  DPI DETECTED — {triggered}/{len(PROBE_TARGETS)} targets triggered")
+        print(f"  ⚠  DPI DETECTED - {triggered}/{len(PROBE_TARGETS)} targets triggered")
         print(f"     Confidence : {verdict['confidence'].upper()}")
     else:
         print(f"  ✓  No DPI detected ({triggered}/{len(PROBE_TARGETS)} targets triggered)")

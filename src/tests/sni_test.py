@@ -2,22 +2,6 @@ import socket
 import ssl
 import time
 
-KNOWN_BLOCKED = [
-    "instagram.com",
-    "facebook.com", 
-    "twitter.com",
-    "x.com",
-    "youtube.com",
-]
-
-KNOWN_CLEAN = [
-    "google.com",
-    "github.com",
-    "cloudflare.com",
-    "yandex.ru",
-    "rutube.ru"
-]
-
 def build_tls_client_hello(sni: str) -> bytes:
     """Craft a realistic TLS ClientHello mimicking a real browser"""
     sni_bytes = sni.encode()
@@ -184,8 +168,6 @@ def run(target_ip: str, samples: int = 1, config: dict = None):
     results = []
 
     for sni in clean + blocked:
-        label = "CLEAN   " if sni in clean else "BLOCKED?"
-
         rtts = []
         statuses = []
 
@@ -196,13 +178,19 @@ def run(target_ip: str, samples: int = 1, config: dict = None):
 
         stats = summarize(rtts)
         status_summary = summarize_status(statuses)
-        dominant = status_summary["dominant"]
-        indicator = "✓" if dominant in ["server_hello", "tls_alert"] else "✗"
+        dominant = status_summary.get("dominant") or "unknown"
+
+        if dominant in ["server_hello", "tls_alert"]:
+            indicator = "✓"
+            status_label = "PASS   "
+        else:
+            indicator = "✗"
+            status_label = "BLOCKED"
 
         if samples == 1:
-            print(f"    [{indicator}] {label} {sni:<25} → {dominant} ({rtts[0]}ms)")
+            print(f"    [{indicator}] {status_label} {sni:<25} → {dominant} ({rtts[0]}ms)")
         else:
-            print(f"    [{indicator}] {label} {sni:<25} → {dominant} ({stats['median_ms']}ms median, {int(status_summary['breakdown'].get(dominant, 0) * 100)}% consistent)")
+            print(f"    [{indicator}] {status_label} {sni:<25} → {dominant} ({stats['median_ms']}ms median, {int(status_summary['breakdown'].get(dominant, 0) * 100)}% consistent)")
 
         results.append({
             "sni": sni,

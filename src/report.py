@@ -43,23 +43,32 @@ def generate(target: str, results: dict) -> dict:
         findings.append(analysis.get("reason", "TTL anomaly detected"))
         score += 2
 
-    # RST
+    #RST
     rst = results.get("rst", {})
-    if rst.get("verdict") == "middlebox":
-        findings.append(f"RST from middlebox response at {rst.get('rst_timing_ms')}ms vs {rst.get('rtt_ms')}ms baseline")
+    if rst.get("dominant_verdict") == "middlebox":
+        findings.append(f"RST injection consistent across {rst.get('samples', 1)} samples")
         score += 3
+    elif rst.get("dominant_verdict") == "ambiguous" and rst.get("ratio") and rst["ratio"] < 0.5:
+        findings.append(f"RST timing suspicious - {rst['ratio']}x baseline")
+        score += 1
 
-    # Malformed TLS
+    # Malformed TLS - compare against clean SNI median RTT
     malformed = results.get("malformed_tls", []) or []
-    tcp_rtt = results.get("tcp_443", {}).get("rtt_ms")
-    if tcp_rtt:
+    sni_results = results.get("sni", []) or []
+    clean_rtts = [
+        r["rtt_stats"]["median_ms"] for r in sni_results
+        if r.get("category") == "clean" and r.get("rtt_stats", {}).get("median_ms")
+    ]
+    clean_baseline = sorted(clean_rtts)[len(clean_rtts)//2] if clean_rtts else None
+
+    if clean_baseline:
         fast_responses = [
             r for r in malformed
             if r.get("rtt_stats", {}).get("median_ms") and
-            r["rtt_stats"]["median_ms"] < tcp_rtt * 0.6
+            r["rtt_stats"]["median_ms"] < clean_baseline * 0.6
         ]
         if fast_responses:
-            findings.append("Malformed TLS responses faster than baseline middlebox TLS parser active")
+            findings.append("Malformed TLS responses faster than clean SNI baseline - middlebox TLS parser active")
             score += 3
 
     # Confidence
