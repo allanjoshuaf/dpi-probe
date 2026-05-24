@@ -108,6 +108,51 @@ def generate(target: str, results: dict, profile: str = None) -> dict:
                 "weight": 0,
             }
 
+    # IP Blocking classification
+    ip_blocking = results.get("ip_blocking", []) or []
+    pure_sni = [r for r in ip_blocking if r.get("classification") == "pure_sni_filtering"]
+    sni_ip_corr = [r for r in ip_blocking if r.get("classification") == "sni_ip_correlation"]
+
+    if pure_sni:
+        domains = [r["sni"] for r in pure_sni]
+        signals["ip_blocking"] = {
+            "observation": f"pure SNI filtering on {len(pure_sni)} domain(s): {', '.join(domains)}",
+            "confidence": "high",
+            "weight": 2,
+        }
+        findings.append(f"Pure SNI filtering observed across all tested IPs: {', '.join(domains)}")
+
+    if sni_ip_corr:
+        domains = [r["sni"] for r in sni_ip_corr]
+        signals["sni_ip_correlation"] = {
+            "observation": f"SNI+IP correlation on {len(sni_ip_corr)} domain(s): {', '.join(domains)}",
+            "confidence": "medium",
+            "weight": 1,
+        }
+        findings.append(f"SNI+IP correlation observed: {', '.join(domains)}")
+
+    # HTTP Host filtering
+    http_host = results.get("http_host", []) or []
+    host_filtered = [r for r in http_host if r.get("classification") == "host_filtered"]
+    host_403 = [r for r in http_host if r.get("classification") == "response_403"]
+
+    if host_filtered:
+        domains = [r["host"] for r in host_filtered]
+        signals["http_host_filtering"] = {
+            "observation": f"HTTP Host filtering on {len(host_filtered)} domain(s): {', '.join(domains)}",
+            "confidence": "medium",
+            "weight": 1,
+        }
+        findings.append(f"HTTP Host header filtering observed: {', '.join(domains)}")
+
+    if host_403:
+        domains = [r["host"] for r in host_403]
+        signals["http_403_response"] = {
+            "observation": f"HTTP 403 on {len(host_403)} domain(s): {', '.join(domains)} — likely server-side, not DPI",
+            "confidence": "low",
+            "weight": 0,
+        }
+
     # Overall score and confidence
     total_weight = sum(s["weight"] for s in signals.values())
     high_signals = [s for s in signals.values() if s["confidence"] == "high"]
@@ -124,7 +169,7 @@ def generate(target: str, results: dict, profile: str = None) -> dict:
 
     report["summary"]["dpi_detected"] = total_weight >= 3
     report["summary"]["confidence"] = confidence
-    max_score = sum([3, 2, 2, 2])  # SNI + TTL + RST + TLS
+    max_score = sum([3, 2, 2, 2, 2, 1, 1])  # SNI + TTL + RST + TLS + ip_blocking + sni_ip_corr + http_host
     report["summary"]["score"] = f"{total_weight}/{max_score}"
     report["summary"]["signals"] = signals
     report["summary"]["findings"] = findings
