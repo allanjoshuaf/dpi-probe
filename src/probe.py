@@ -7,6 +7,7 @@ from src.tests import malformed_tls_test
 from src import report
 from src import config as cfg
 from src.tests import ip_block_test
+from src.tests import http_host_test
 
 class Probe:
     def __init__(self, target, samples=1, config=None, profile=None):
@@ -83,6 +84,11 @@ class Probe:
         results = ip_block_test.run(self.config)
         self.results["ip_blocking"] = results
 
+    def test_http_host(self):
+        """HTTP Host header filtering detection"""
+        results = http_host_test.run(self.config)
+        self.results["http_host"] = results
+
     def run(self):
         self.test_tcp_rst()
         self.test_plaintext_http()
@@ -91,6 +97,7 @@ class Probe:
         self.test_rst()
         self.test_malformed_tls()
         self.test_ip_blocking()
+        self.test_http_host()
         r = report.generate(self.target, self.results, self.profile)
         report.print_summary(r)
         path = report.save(r)
