@@ -34,6 +34,12 @@ def main():
         action="store_true",
         help="Probe all targets from targets.json in one run"
     )
+    parser.add_argument(
+        "--profile",
+        type=str,
+        default=None,
+        help="Network condition label e.g. no-vpn, adguard, reality, mobile"
+    )
 
     args = parser.parse_args()
     config = cfg.load()
@@ -47,7 +53,7 @@ def main():
             print(f"\n{'='*50}")
             print(f"  Target : {t['name']} - {t['ip']}")
             print(f"{'='*50}")
-            probe = Probe(t["ip"], samples=args.samples, config=config)
+            probe = Probe(t["ip"], samples=args.samples, config=config, profile=args.profile)
             probe.run()
         sys.exit(0)
 
@@ -60,7 +66,7 @@ def main():
     if args.samples > 1:
         print(f"[*] Samples per test : {args.samples}")
 
-    probe = Probe(args.target, samples=args.samples, config=config)
+    probe = Probe(args.target, samples=args.samples, config=config, profile=args.profile)
     probe.run()
 
 if __name__ == "__main__":
