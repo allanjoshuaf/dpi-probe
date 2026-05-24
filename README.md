@@ -202,9 +202,9 @@ Reports and packet captures may expose your IP address, ISP, tested domains, tim
 - [x] Stable JSON schema
 
 ### Phase 3 - DPI Classification
-- [ ] IP-based blocking classification
-- [ ] HTTP Host header filtering detection
-- [ ] SNI + destination IP correlation detection
+- [x] IP-based blocking classification
+- [x] HTTP Host header filtering detection
+- [x] SNI + destination IP correlation detection
 
 ### Phase 4 - Fingerprinting
 - [ ] Capture response TTL
