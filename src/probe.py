@@ -48,7 +48,7 @@ class Probe:
             s.close()
             if "302" in response or "301" in response:
                 self.results["http"] = {"status": "redirect"}
-                print("    [!] Redirect detected - possible DPI injection")
+                print("    [!] Redirect detected - HTTP behavior differs from baseline")
             elif "reset" in response.lower() or len(response) == 0:
                 self.results["http"] = {"status": "blocked"}
                 print("    [!] Empty response - possible block")

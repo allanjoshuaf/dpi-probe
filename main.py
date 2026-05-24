@@ -40,9 +40,20 @@ def main():
         default=None,
         help="Network condition label e.g. no-vpn, adguard, reality, mobile"
     )
+    parser.add_argument(
+    "--compare",
+    nargs=2,
+    metavar=("REPORT_A", "REPORT_B"),
+    help="Compare two report files"
+    )
 
     args = parser.parse_args()
     config = cfg.load()
+
+    if args.compare:
+        from src import compare
+        compare.run(args.compare[0], args.compare[1])
+        sys.exit(0)
 
     if args.multi:
         targets = config.get("targets", [])
