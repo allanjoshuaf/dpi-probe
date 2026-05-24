@@ -98,7 +98,7 @@ class Probe:
         self.test_malformed_tls()
         self.test_ip_blocking()
         self.test_http_host()
-        r = report.generate(self.target, self.results, self.profile)
+        r = report.generate(self.target, self.results, self.profile, self.samples)
         report.print_summary(r)
         path = report.save(r)
         print(f"\n  Report saved → {path}")

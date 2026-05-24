@@ -3,7 +3,7 @@ import datetime
 import socket
 import uuid
 
-def generate(target: str, results: dict, profile: str = None) -> dict:
+def generate(target: str, results: dict, profile: str = None, samples: int = 1) -> dict:
     report = {
         "schema_version": "1.0",
         "meta": {
@@ -13,6 +13,7 @@ def generate(target: str, results: dict, profile: str = None) -> dict:
             "tool": "dpi-probe",
             "version": "0.1.0",
             "profile": profile,
+            "samples": samples,
         },
         "summary": {
             "dpi_detected": False,
@@ -38,14 +39,14 @@ def generate(target: str, results: dict, profile: str = None) -> dict:
             "observation": f"silent_drop on {len(blocked)} domain(s): {', '.join(domains)}",
             "consistency": f"{int(consistency * 100)}%",
             "confidence": "high" if consistency >= 0.9 else "medium",
-            "weight": 3,
+            "score": 3,
         }
         findings.append(f"SNI filtering observed for: {', '.join(domains)}")
     elif blocked:
         signals["sni_filtering"] = {
             "observation": "silent_drop detected but no clean baseline to compare",
             "confidence": "low",
-            "weight": 1,
+            "score": 1,
         }
 
     # TTL
@@ -56,7 +57,7 @@ def generate(target: str, results: dict, profile: str = None) -> dict:
         signals["ttl_suppression"] = {
             "observation": f"No ICMP TTL exceeded on hops {silent_ttls}, first connection at TTL {analysis['min_ttl_to_connect']}",
             "confidence": "medium",
-            "weight": 2,
+            "score": 2,
         }
         findings.append(f"TTL/ICMP behavior consistent with suppression at hops {silent_ttls}")
 
@@ -68,20 +69,20 @@ def generate(target: str, results: dict, profile: str = None) -> dict:
         signals["rst_timing"] = {
             "observation": f"Response timing {ratio}x baseline - consistent with closer responder",
             "confidence": "medium",
-            "weight": 2,
+            "score": 2,
         }
         findings.append(f"RST timing consistent with closer responder - {ratio}x baseline")
     elif dominant_verdict == "ambiguous" and ratio and ratio < 0.5:
         signals["rst_timing"] = {
             "observation": f"RST timing {ratio}x baseline - inconclusive without packet capture",
             "confidence": "low",
-            "weight": 1,
+            "score": 1,
         }
     else:
         signals["rst_timing"] = {
             "observation": f"RST timing {ratio}x baseline - no anomaly detected",
             "confidence": "none",
-            "weight": 0,
+            "score": 0,
         }
 
     # Malformed TLS
@@ -98,14 +99,14 @@ def generate(target: str, results: dict, profile: str = None) -> dict:
             signals["tls_parser"] = {
                 "observation": f"{len(fast)} malformed TLS variant(s) responded faster than clean SNI baseline ({clean_baseline}ms)",
                 "confidence": "medium",
-                "weight": 2,
+                "score": 2,
             }
             findings.append("Malformed TLS responses faster than clean SNI baseline - timing consistent with middlebox TLS parser")
         else:
             signals["tls_parser"] = {
                 "observation": f"Malformed TLS responses within clean SNI baseline range ({clean_baseline}ms)  inconclusive",
                 "confidence": "low",
-                "weight": 0,
+                "score": 0,
             }
 
     # IP Blocking classification
@@ -118,7 +119,7 @@ def generate(target: str, results: dict, profile: str = None) -> dict:
         signals["ip_blocking"] = {
             "observation": f"pure SNI filtering on {len(pure_sni)} domain(s): {', '.join(domains)}",
             "confidence": "high",
-            "weight": 2,
+            "score": 2,
         }
         findings.append(f"Pure SNI filtering observed across all tested IPs: {', '.join(domains)}")
 
@@ -127,7 +128,7 @@ def generate(target: str, results: dict, profile: str = None) -> dict:
         signals["sni_ip_correlation"] = {
             "observation": f"SNI+IP correlation on {len(sni_ip_corr)} domain(s): {', '.join(domains)}",
             "confidence": "medium",
-            "weight": 1,
+            "score": 1,
         }
         findings.append(f"SNI+IP correlation observed: {', '.join(domains)}")
 
@@ -141,7 +142,7 @@ def generate(target: str, results: dict, profile: str = None) -> dict:
         signals["http_host_filtering"] = {
             "observation": f"HTTP Host filtering on {len(host_filtered)} domain(s): {', '.join(domains)}",
             "confidence": "medium",
-            "weight": 1,
+            "score": 1,
         }
         findings.append(f"HTTP Host header filtering observed: {', '.join(domains)}")
 
@@ -150,11 +151,11 @@ def generate(target: str, results: dict, profile: str = None) -> dict:
         signals["http_403_response"] = {
             "observation": f"HTTP 403 on {len(host_403)} domain(s): {', '.join(domains)} — likely server-side, not DPI",
             "confidence": "low",
-            "weight": 0,
+            "score": 0,
         }
 
     # Overall score and confidence
-    total_weight = sum(s["weight"] for s in signals.values())
+    total_weight = sum(s["score"] for s in signals.values())
     high_signals = [s for s in signals.values() if s["confidence"] == "high"]
     medium_signals = [s for s in signals.values() if s["confidence"] == "medium"]
 
@@ -201,6 +202,9 @@ def print_summary(report: dict):
     print(f"  DPI detected  : {'YES' if s['dpi_detected'] else 'NO'}")
     print(f"  Confidence    : {s['confidence'].upper()}")
     print(f"  Signal score  : {s['score']}")
+    samples = report.get("meta", {}).get("samples", 1)
+    reliability = "low (samples=1)" if samples <= 1 else f"medium (samples={samples})" if samples < 5 else f"high (samples={samples})"
+    print(f"  Reliability   : {reliability}")
     print(f"\n  Findings :")
     for f in s["findings"]:
         print(f"    → {f}")
