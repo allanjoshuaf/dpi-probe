@@ -1,14 +1,18 @@
 import json
 import datetime
 import socket
-def generate(target: str, results: dict) -> dict:
+import uuid
+
+def generate(target: str, results: dict, profile: str = None) -> dict:
     report = {
         "schema_version": "1.0",
         "meta": {
+            "run_id": str(uuid.uuid4()),
             "target": target,
             "timestamp": datetime.datetime.utcnow().isoformat() + "Z",
             "tool": "dpi-probe",
             "version": "0.1.0",
+            "profile": profile,
         },
         "summary": {
             "dpi_detected": False,

@@ -8,10 +8,11 @@ from src import report
 from src import config as cfg
 
 class Probe:
-    def __init__(self, target, samples=1, config=None):
+    def __init__(self, target, samples=1, config=None, profile=None):
         self.target = target
         self.samples = samples
         self.config = config or cfg.load()
+        self.profile = profile
         self.results = {}
 
     def test_tcp_rst(self):
@@ -83,7 +84,7 @@ class Probe:
         self.test_ttl()
         self.test_rst()
         self.test_malformed_tls()
-        r = report.generate(self.target, self.results)
+        r = report.generate(self.target, self.results, self.profile)
         report.print_summary(r)
         path = report.save(r)
         print(f"\n  Report saved → {path}")
