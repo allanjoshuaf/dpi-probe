@@ -34,16 +34,22 @@ py main.py 1.1.1.1
 # Repeat each probe 3 times
 py main.py 1.1.1.1 --samples 3
 
-# Probe all configured targets from targets.json
-py main.py --multi
+# Tag the network condition
+py main.py 1.1.1.1 --samples 3 --profile no-vpn
+py main.py 1.1.1.1 --samples 3 --profile adguard
+py main.py 1.1.1.1 --samples 3 --profile reality
 
-# Probe all configured targets with repeated samples
-py main.py --multi --samples 3
+# Probe all configured targets from targets.json
+py main.py --multi --samples 3 --profile no-vpn
+
+# Compare two reports
+py main.py --compare reports/report_A.json reports/report_B.json
+
+# Show version
+py main.py --version
 ```
 
-Targeted probes save JSON reports in the current directory.
-
----
+Targeted probes save JSON reports in the `reports/` directory.
 
 ## Configuration
 
