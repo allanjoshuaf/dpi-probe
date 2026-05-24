@@ -133,7 +133,12 @@ def run(target_ip: str, samples: int = 1):
     min_ttl = min(connected_ttls) if connected_ttls else None
     suspicious = bool(timeout_ttls and connected_ttls)
 
-    observation = "consistent_with_icmp_suppression" if suspicious else "no_ttl_anomaly"
+    if suspicious:
+        observation = "consistent_with_icmp_suppression"
+    elif min_ttl == 1:
+        observation = "tunnel_local_endpoint_observed"
+    else:
+        observation = "no_ttl_anomaly"
 
     analysis = {
         "min_ttl_to_connect": min_ttl,
