@@ -46,6 +46,17 @@ def main():
     metavar=("REPORT_A", "REPORT_B"),
     help="Compare two report files"
     )
+    parser.add_argument(
+    "--pcap",
+    action="store_true",
+    help="Capture and analyze packets with tshark during probe"
+    )
+    parser.add_argument(
+    "--pcap-interface",
+    type=str,
+    default=None,
+    help="Network interface for pcap capture (default: auto)"
+    )
 
     args = parser.parse_args()
     config = cfg.load()
@@ -64,7 +75,7 @@ def main():
             print(f"\n{'='*50}")
             print(f"  Target : {t['name']} - {t['ip']}")
             print(f"{'='*50}")
-            probe = Probe(t["ip"], samples=args.samples, config=config, profile=args.profile)
+            probe = Probe(t["ip"], samples=args.samples, config=config, profile=args.profile, pcap=args.pcap, pcap_interface=args.pcap_interface)
             probe.run()
         sys.exit(0)
 
@@ -77,7 +88,7 @@ def main():
     if args.samples > 1:
         print(f"[*] Samples per test : {args.samples}")
 
-    probe = Probe(args.target, samples=args.samples, config=config, profile=args.profile)
+    probe = Probe(args.target, samples=args.samples, config=config, profile=args.profile, pcap=args.pcap, pcap_interface=args.pcap_interface)
     probe.run()
 
 if __name__ == "__main__":
