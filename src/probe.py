@@ -10,11 +10,13 @@ from src.tests import ip_block_test
 from src.tests import http_host_test
 
 class Probe:
-    def __init__(self, target, samples=1, config=None, profile=None):
+    def __init__(self, target, samples=1, config=None, profile=None, pcap=False, pcap_interface=None):
         self.target = target
         self.samples = samples
         self.config = config or cfg.load()
         self.profile = profile
+        self.pcap = pcap
+        self.pcap_interface = pcap_interface
         self.results = {}
 
     def test_tcp_rst(self):
@@ -90,6 +92,25 @@ class Probe:
         self.results["http_host"] = results
 
     def run(self):
+        if self.pcap:
+            from src import pcap as pcap_module
+            import os
+            import subprocess
+            os.makedirs("reports", exist_ok=True)
+            ts = time.strftime("%Y%m%d_%H%M%S")
+            pcap_path = f"reports/capture_{self.target.replace('.', '_')}_{ts}.pcapng"
+            tshark = pcap_module.find_tshark()
+            interface = self.pcap_interface or "5"
+            cmd = [
+                tshark,
+                "-i", interface,
+                "-f", f"host {self.target} and port 443",
+                "-w", pcap_path,
+                "-q",
+            ]
+            print(f"\n[*] PCAP capture started — interface {interface}")
+            proc = subprocess.Popen(cmd, stderr=subprocess.DEVNULL)
+
         self.test_tcp_rst()
         self.test_plaintext_http()
         self.test_sni()
@@ -98,6 +119,15 @@ class Probe:
         self.test_malformed_tls()
         self.test_ip_blocking()
         self.test_http_host()
+
+        if self.pcap:
+            proc.terminate()
+            proc.wait()
+            size = os.path.getsize(pcap_path) if os.path.exists(pcap_path) else 0
+            print(f"    [+] Capture stopped — {size} bytes saved")
+            analysis = pcap_module.analyze(pcap_path, self.target)
+            self.results["pcap"] = {"pcap_path": pcap_path, "analysis": analysis}
+
         r = report.generate(self.target, self.results, self.profile, self.samples)
         report.print_summary(r)
         path = report.save(r)
