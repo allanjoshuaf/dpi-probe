@@ -88,112 +88,99 @@ def capture(target_ip: str, output_path: str, duration: int = 30, interface: str
     return result
 
 def analyze(pcap_path: str, target_ip: str) -> dict:
-    """
-    Extract key fields from pcap using tshark JSON output.
-    Focus on: TTL, TCP flags, RST packets, TLS alerts, retransmissions.
-    """
     tshark = find_tshark()
     if not tshark:
         return {"error": "tshark not found"}
-
     if not os.path.exists(pcap_path):
         return {"error": f"File not found: {pcap_path}"}
 
-    fields = [
-        "-e", "frame.time_relative",
-        "-e", "ip.src",
-        "-e", "ip.dst",
-        "-e", "ip.ttl",
-        "-e", "tcp.flags",
-        "-e", "tcp.flags.reset",
-        "-e", "tcp.flags.syn",
-        "-e", "tcp.analysis.retransmission",
-        "-e", "tls.record.content_type",
-        "-e", "tls.handshake.type",
-    ]
+    def run_tshark(filter_expr, fields):
+        cmd = [tshark, "-r", pcap_path, "-T", "fields",
+               "-Y", filter_expr] + fields
+        try:
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+            return [l.strip() for l in r.stdout.strip().split("\n") if l.strip()]
+        except Exception:
+            return []
 
-    cmd = [
-        tshark,
-        "-r", pcap_path,
-        "-T", "json",
-        "-Y", f"ip.addr == {target_ip}",
-    ] + fields
+    # RST packets
+    rst_lines = run_tshark(
+        f"tcp.flags.reset == 1 and ip.addr == {target_ip}",
+        ["-e", "frame.time_relative", "-e", "ip.src", "-e", "ip.ttl"]
+    )
+    rst_packets = []
+    for line in rst_lines:
+        parts = line.split("\t")
+        if len(parts) >= 3:
+            rst_packets.append({"time": parts[0], "src": parts[1], "ttl": parts[2]})
 
-    try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
-        if result.returncode != 0:
-            return {"error": result.stderr.strip()}
+    # Retransmissions
+    retrans_lines = run_tshark(
+        f"tcp.analysis.retransmission and ip.addr == {target_ip}",
+        ["-e", "frame.time_relative"]
+    )
 
-        packets = json.loads(result.stdout) if result.stdout.strip() else []
+    # TTL values
+    ttl_lines = run_tshark(
+        f"ip.addr == {target_ip}",
+        ["-e", "ip.ttl"]
+    )
+    ttls = []
+    for line in ttl_lines:
+        try:
+            ttls.append(int(line.strip()))
+        except Exception:
+            pass
+    ttls = list(set(ttls))
 
-        rst_packets = []
-        tls_alerts = []
-        retransmissions = []
-        ttls = []
+    # TLS alerts
+    tls_lines = run_tshark(
+        f"tls.record.content_type == 21 and ip.addr == {target_ip}",
+        ["-e", "frame.time_relative", "-e", "ip.src", "-e", "ip.ttl"]
+    )
+    tls_alerts = []
+    for line in tls_lines:
+        parts = line.split("\t")
+        if len(parts) >= 3:
+            tls_alerts.append({"time": parts[0], "src": parts[1], "ttl": parts[2]})
 
-        for pkt in packets:
-            layers = pkt.get("_source", {}).get("layers", {})
+    # Total packets
+    total_lines = run_tshark(
+        f"ip.addr == {target_ip}",
+        ["-e", "frame.number"]
+    )
 
-            ttl = layers.get("ip.ttl")
-            if ttl:
-                if isinstance(ttl, list):
-                    ttls.extend([int(t) for t in ttl if t])
-                else:
-                    ttls.append(int(ttl))
+    analysis = {
+        "total_packets": len(total_lines),
+        "rst_packets": len(rst_packets),
+        "rst_details": rst_packets[:5],
+        "tls_alerts": len(tls_alerts),
+        "tls_alert_details": tls_alerts[:5],
+        "retransmissions": len(retrans_lines),
+        "ttl_values": ttls,
+        "ttl_min": min(ttls) if ttls else None,
+        "ttl_max": max(ttls) if ttls else None,
+    }
 
-            if layers.get("tcp.flags.reset") == "1":
-                rst_packets.append({
-                    "time": layers.get("frame.time_relative"),
-                    "src": layers.get("ip.src"),
-                    "ttl": layers.get("ip.ttl"),
-                })
+    print(f"\n[*] PCAP Analysis — {pcap_path}")
+    print(f"    Total packets     : {analysis['total_packets']}")
+    print(f"    RST packets       : {analysis['rst_packets']}")
+    print(f"    TLS alerts        : {analysis['tls_alerts']}")
+    print(f"    Retransmissions   : {analysis['retransmissions']}")
+    print(f"    TTL values seen   : {analysis['ttl_values']}")
 
-            if layers.get("tls.record.content_type") == "21":
-                tls_alerts.append({
-                    "time": layers.get("frame.time_relative"),
-                    "src": layers.get("ip.src"),
-                    "ttl": layers.get("ip.ttl"),
-                })
+    if rst_packets:
+        print(f"\n    RST details (first 3):")
+        for r in rst_packets[:3]:
+            print(f"      t={r['time']}s src={r['src']} ttl={r['ttl']}")
 
-            if layers.get("tcp.analysis.retransmission"):
-                retransmissions.append(layers.get("frame.time_relative"))
+    if tls_alerts:
+        print(f"\n    TLS alert details (first 3):")
+        for a in tls_alerts[:3]:
+            print(f"      t={a['time']}s src={a['src']} ttl={a['ttl']}")
 
-        analysis = {
-            "total_packets": len(packets),
-            "rst_packets": len(rst_packets),
-            "rst_details": rst_packets[:5],
-            "tls_alerts": len(tls_alerts),
-            "tls_alert_details": tls_alerts[:5],
-            "retransmissions": len(retransmissions),
-            "ttl_values": list(set(ttls)),
-            "ttl_min": min(ttls) if ttls else None,
-            "ttl_max": max(ttls) if ttls else None,
-        }
-
-        print(f"\n[*] PCAP Analysis — {pcap_path}")
-        print(f"    Total packets     : {analysis['total_packets']}")
-        print(f"    RST packets       : {analysis['rst_packets']}")
-        print(f"    TLS alerts        : {analysis['tls_alerts']}")
-        print(f"    Retransmissions   : {analysis['retransmissions']}")
-        print(f"    TTL values seen   : {analysis['ttl_values']}")
-
-        if rst_packets:
-            print(f"\n    RST details:")
-            for r in rst_packets[:3]:
-                print(f"      t={r['time']}s src={r['src']} ttl={r['ttl']}")
-
-        if tls_alerts:
-            print(f"\n    TLS alert details:")
-            for a in tls_alerts[:3]:
-                print(f"      t={a['time']}s src={a['src']} desc={a['desc']} ttl={a['ttl']}")
-
-        return analysis
-
-    except json.JSONDecodeError:
-        return {"error": "Failed to parse tshark JSON output"}
-    except Exception as e:
-        return {"error": str(e)}
-
+    return analysis
+    
 def run(target_ip: str, output_dir: str = "reports", duration: int = 30, interface: str = None) -> dict:
     """
     Full PCAP workflow: capture then analyze.
