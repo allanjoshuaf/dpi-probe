@@ -22,6 +22,20 @@ It probes whether TLS SNI, destination IP, HTTP Host headers, malformed TLS payl
 
 ---
 
+## Prerequisites
+
+- Python 3.11+
+- For `--pcap` mode: Wireshark with tshark
+
+Install Wireshark from https://www.wireshark.org/download.html and check "Install TShark" and "Install Npcap" during setup.
+
+Find your active interface:
+```bash
+py -c "from src import pcap; [print(i) for i in pcap.list_interfaces()]"
+```
+
+Then pass it with `--pcap-interface N`.
+
 ## Usage
 
 ```bash
@@ -94,6 +108,22 @@ The score is conservative by design. Each signal is weighted separately and repo
 ## Field Results: Restrictive Network Path
 
 These are real observations from one restrictive network path. Results are path-specific and should not be generalized across ISPs or countries.
+
+### PCAP Capture Analysis
+
+Captured with `--pcap` flag during probe runs. Requires Wireshark/tshark.
+
+| Metric | Tele2 4G no-vpn | VLESS Reality |
+|---|---|---|
+| Total packets | 716 | 806 |
+| Retransmissions | 129 | 0 |
+| RST packets | 24 | 0 |
+| TLS alerts | 36 | 52 |
+| Dominant TTL | 55 (9 hops) | 64 (local tunnel) |
+| Avg inter-packet timing | 192ms | 63ms |
+| Avg packet size | 101.7B | 65.5B |
+
+Under no-vpn: 129 retransmissions confirm silent drop behavior; blocked packets trigger TCP retransmission backoff. Under VLESS Reality: zero retransmissions, all packets reach destination through the tunnel.
 
 ### SNI Filtering
 
