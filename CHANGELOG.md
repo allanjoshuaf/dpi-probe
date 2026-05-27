@@ -2,7 +2,7 @@
 
 All notable changes to dpi-probe are documented here.
 
-## [0.1.0-alpha] — 2026-05-23
+## [0.1.0-alpha] - 2026-05-23
 
 ### Added
 - TCP 443 reachability test

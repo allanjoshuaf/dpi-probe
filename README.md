@@ -211,8 +211,8 @@ Reports and packet captures may expose your IP address, ISP, tested domains, tim
 - [x] IP-based blocking classification
 - [x] HTTP Host header filtering detection
 - [x] SNI + destination IP correlation detection
-- [x] Compare mode — `--compare` two reports
-- [x] Profile tagging — `--profile`
+- [x] Compare mode - `--compare` two reports
+- [x] Profile tagging - `--profile`
 - [x] Reliability indicator based on sample count
 
 ### Phase 4 - Fingerprinting
