@@ -41,25 +41,49 @@ def main():
         help="Network condition label e.g. no-vpn, adguard, reality, mobile"
     )
     parser.add_argument(
-    "--compare",
-    nargs=2,
-    metavar=("REPORT_A", "REPORT_B"),
-    help="Compare two report files"
+        "--compare",
+        nargs=2,
+        metavar=("REPORT_A", "REPORT_B"),
+        help="Compare two report files"
     )
     parser.add_argument(
-    "--pcap",
-    action="store_true",
-    help="Capture and analyze packets with tshark during probe"
+        "--pcap",
+        action="store_true",
+        help="Capture and analyze packets with tshark during probe"
     )
     parser.add_argument(
-    "--pcap-interface",
-    type=str,
-    default=None,
-    help="Network interface for pcap capture (default: auto)"
+        "--pcap-interface",
+        type=str,
+        default=None,
+        help="Network interface for pcap capture (default: auto)"
+    )
+    parser.add_argument(
+        "--anonymize",
+        type=str,
+        default=None,
+        metavar="REPORT",
+        help="Anonymize a report for voluntary sharing"
+    )
+    parser.add_argument(
+        "--isp",
+        type=str,
+        default=None,
+        help="ISP name to include in anonymized report e.g. Tele2, Beeline"
+    )
+    parser.add_argument(
+        "--country",
+        type=str,
+        default=None,
+        help="Country code to include in anonymized report e.g. RU, IR, CN"
     )
 
     args = parser.parse_args()
     config = cfg.load()
+
+    if args.anonymize:
+        from src import anonymize
+        anonymize.run(args.anonymize, isp=args.isp, country=args.country)
+        sys.exit(0)
 
     if args.compare:
         from src import compare
