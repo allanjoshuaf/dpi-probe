@@ -149,7 +149,7 @@ def generate(target: str, results: dict, profile: str = None, samples: int = 1) 
     if host_403:
         domains = [r["host"] for r in host_403]
         signals["http_403_response"] = {
-            "observation": f"HTTP 403 on {len(host_403)} domain(s): {', '.join(domains)} — likely server-side, not DPI",
+            "observation": f"HTTP 403 on {len(host_403)} domain(s): {', '.join(domains)} - likely server-side, not DPI",
             "confidence": "low",
             "score": 0,
         }

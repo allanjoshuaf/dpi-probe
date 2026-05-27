@@ -131,8 +131,8 @@ def run(path_a: str, path_b: str):
     summary_b = report_b.get("summary", {})
 
     print("\n[*] dpi-probe compare mode")
-    print(f"    A : {meta_a.get('target')} — {meta_a.get('timestamp')} — profile: {meta_a.get('profile', 'unknown')}")
-    print(f"    B : {meta_b.get('target')} — {meta_b.get('timestamp')} — profile: {meta_b.get('profile', 'unknown')}")
+    print(f"    A : {meta_a.get('target')} - {meta_a.get('timestamp')} - profile: {meta_a.get('profile', 'unknown')}")
+    print(f"    B : {meta_b.get('target')} - {meta_b.get('timestamp')} - profile: {meta_b.get('profile', 'unknown')}")
     print()
 
     all_changes = []

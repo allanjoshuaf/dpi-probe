@@ -62,7 +62,7 @@ def capture(target_ip: str, output_path: str, duration: int = 30, interface: str
     result = {"output_path": output_path, "target_ip": target_ip, "duration": duration}
 
     try:
-        print(f"\n[*] PCAP capture starting — {duration}s on interface {interface}")
+        print(f"\n[*] PCAP capture starting - {duration}s on interface {interface}")
         print(f"    Filter : host {target_ip} and port 443")
         print(f"    Output : {output_path}")
 
@@ -74,7 +74,7 @@ def capture(target_ip: str, output_path: str, duration: int = 30, interface: str
             size = os.path.getsize(output_path) if os.path.exists(output_path) else 0
             result["size_bytes"] = size
             result["status"] = "ok"
-            print(f"    [+] Capture complete — {size} bytes saved")
+            print(f"    [+] Capture complete - {size} bytes saved")
         else:
             result["status"] = "error"
             print(f"    [!] Capture error: {proc.stderr.strip()}")
@@ -143,7 +143,68 @@ def analyze(pcap_path: str, target_ip: str) -> dict:
         parts = line.split("\t")
         if len(parts) >= 3:
             tls_alerts.append({"time": parts[0], "src": parts[1], "ttl": parts[2]})
+    # TLS ClientHello - SNI and version fingerprinting
+    hello_lines = run_tshark(
+        f"tls.handshake.type == 1 and ip.addr == {target_ip}",
+        ["-e", "frame.time_relative", "-e", "ip.src",
+         "-e", "tls.handshake.extensions_server_name",
+         "-e", "tls.handshake.version",
+         "-e", "ip.ttl"]
+    )
+    client_hellos = []
+    for line in hello_lines:
+        parts = line.split("\t")
+        if len(parts) >= 5:
+            client_hellos.append({
+                "time": parts[0],
+                "src": parts[1],
+                "sni": parts[2],
+                "tls_version": parts[3],
+                "ttl": parts[4],
+            })
 
+    # Packet size distribution
+    size_lines = run_tshark(
+        f"ip.addr == {target_ip}",
+        ["-e", "frame.len"]
+    )
+    sizes = []
+    for line in size_lines:
+        try:
+            sizes.append(int(line.strip()))
+        except Exception:
+            pass
+
+    size_stats = {}
+    if sizes:
+        size_stats = {
+            "min": min(sizes),
+            "max": max(sizes),
+            "avg": round(sum(sizes) / len(sizes), 1),
+            "total_bytes": sum(sizes),
+        }
+
+    # Inter-packet timing
+    timing_lines = run_tshark(
+        f"ip.addr == {target_ip}",
+        ["-e", "frame.time_delta"]
+    )
+    deltas = []
+    for line in timing_lines:
+        try:
+            deltas.append(float(line.strip()))
+        except Exception:
+            pass
+
+    timing_stats = {}
+    if deltas:
+        deltas_ms = [round(d * 1000, 2) for d in deltas]
+        timing_stats = {
+            "min_ms": min(deltas_ms),
+            "max_ms": max(deltas_ms),
+            "avg_ms": round(sum(deltas_ms) / len(deltas_ms), 2),
+        }
+    
     # Total packets
     total_lines = run_tshark(
         f"ip.addr == {target_ip}",
@@ -151,6 +212,10 @@ def analyze(pcap_path: str, target_ip: str) -> dict:
     )
 
     analysis = {
+        "client_hellos": len(client_hellos),
+        "client_hello_details": client_hellos[:5],
+        "packet_sizes": size_stats,
+        "timing": timing_stats,
         "total_packets": len(total_lines),
         "rst_packets": len(rst_packets),
         "rst_details": rst_packets[:5],
@@ -162,12 +227,21 @@ def analyze(pcap_path: str, target_ip: str) -> dict:
         "ttl_max": max(ttls) if ttls else None,
     }
 
-    print(f"\n[*] PCAP Analysis — {pcap_path}")
+    print(f"\n[*] PCAP Analysis - {pcap_path}")
     print(f"    Total packets     : {analysis['total_packets']}")
     print(f"    RST packets       : {analysis['rst_packets']}")
     print(f"    TLS alerts        : {analysis['tls_alerts']}")
     print(f"    Retransmissions   : {analysis['retransmissions']}")
     print(f"    TTL values seen   : {analysis['ttl_values']}")
+    print(f"    ClientHellos      : {analysis['client_hellos']}")
+    if client_hellos:
+        print(f"\n    ClientHello SNI details (first 3):")
+        for h in client_hellos[:3]:
+            print(f"      t={h['time']}s sni={h['sni']} tls={h['tls_version']} ttl={h['ttl']}")
+    if size_stats:
+        print(f"\n    Packet sizes      : min={size_stats['min']}B avg={size_stats['avg']}B max={size_stats['max']}B")
+    if timing_stats:
+        print(f"    Inter-pkt timing  : min={timing_stats['min_ms']}ms avg={timing_stats['avg_ms']}ms max={timing_stats['max_ms']}ms")
 
     if rst_packets:
         print(f"\n    RST details (first 3):")
@@ -180,7 +254,7 @@ def analyze(pcap_path: str, target_ip: str) -> dict:
             print(f"      t={a['time']}s src={a['src']} ttl={a['ttl']}")
 
     return analysis
-    
+
 def run(target_ip: str, output_dir: str = "reports", duration: int = 30, interface: str = None) -> dict:
     """
     Full PCAP workflow: capture then analyze.

@@ -91,7 +91,7 @@ def run(config: dict) -> list:
     results = []
     clean_responses = []
 
-    # First pass — establish clean baseline response codes
+    # First pass - establish clean baseline response codes
     for host in clean:
         r = test_http_host(target_ip, host)
         if r["response_code"]:
@@ -99,7 +99,7 @@ def run(config: dict) -> list:
 
     clean_codes = list(set(clean_responses)) if clean_responses else ["200", "301", "302", "400"]
 
-    # Second pass — test all domains
+    # Second pass - test all domains
     for host in clean + blocked:
         category = "clean" if host in clean else "blocked"
         r = test_http_host(target_ip, host)

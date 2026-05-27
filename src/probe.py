@@ -108,7 +108,7 @@ class Probe:
                 "-w", pcap_path,
                 "-q",
             ]
-            print(f"\n[*] PCAP capture started — interface {interface}")
+            print(f"\n[*] PCAP capture started - interface {interface}")
             proc = subprocess.Popen(cmd, stderr=subprocess.DEVNULL)
 
         self.test_tcp_rst()
@@ -124,7 +124,7 @@ class Probe:
             proc.terminate()
             proc.wait()
             size = os.path.getsize(pcap_path) if os.path.exists(pcap_path) else 0
-            print(f"    [+] Capture stopped — {size} bytes saved")
+            print(f"    [+] Capture stopped - {size} bytes saved")
             analysis = pcap_module.analyze(pcap_path, self.target)
             self.results["pcap"] = {"pcap_path": pcap_path, "analysis": analysis}
 
