@@ -53,7 +53,7 @@ def capture(target_ip: str, output_path: str, duration: int = 30, interface: str
     cmd = [
         tshark,
         "-i", interface,
-        "-f", f"host {target_ip} and port 443",
+        "-f", f"host {target_ip}",
         "-w", output_path,
         "-a", f"duration:{duration}",
         "-q",
@@ -63,7 +63,7 @@ def capture(target_ip: str, output_path: str, duration: int = 30, interface: str
 
     try:
         print(f"\n[*] PCAP capture starting - {duration}s on interface {interface}")
-        print(f"    Filter : host {target_ip} and port 443")
+        print(f"    Filter : host {target_ip}")
         print(f"    Output : {output_path}")
 
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=duration + 10)
@@ -119,6 +119,110 @@ def analyze(pcap_path: str, target_ip: str) -> dict:
         f"tcp.analysis.retransmission and ip.addr == {target_ip}",
         ["-e", "frame.time_relative"]
     )
+    # TCP window size anomalies
+    window_lines = run_tshark(
+        f"tcp.flags.reset == 1 and ip.addr == {target_ip}",
+        [
+            "-e", "frame.time_relative",
+            "-e", "ip.src",
+            "-e", "tcp.window_size",
+            "-e", "tcp.seq",
+            "-e", "tcp.ack",
+            "-e", "ip.ttl",
+        ]
+    )
+
+    rst_anomalies = []
+
+    for line in window_lines:
+        parts = line.split("\t")
+
+        if len(parts) >= 6:
+            rst_anomalies.append({
+                "time": parts[0],
+                "src": parts[1],
+                "window": parts[2],
+                "seq": parts[3],
+                "ack": parts[4],
+                "ttl": parts[5],
+            })
+
+    suspicious_rst = []
+
+    for r in rst_anomalies:
+        flags = []
+
+        try:
+            if int(r["window"]) == 0:
+                flags.append("zero_window")
+        except Exception:
+            pass
+
+        try:
+            ttl = int(r["ttl"])
+
+            if ttl < 50 and ttl != 64:
+                flags.append("low_ttl")
+        except Exception:
+            pass
+
+        if flags:
+            r["flags"] = flags
+            suspicious_rst.append(r)
+
+    # Client -> Server TTL
+    client_ttl_lines = run_tshark(
+        f"tcp and ip.dst == {target_ip}",
+        ["-e", "ip.ttl"]
+    )
+
+    server_ttl_lines = run_tshark(
+        f"tcp and ip.src == {target_ip}",
+        ["-e", "ip.ttl"]
+    )
+
+    client_ttls = []
+
+    for line in client_ttl_lines:
+        try:
+            client_ttls.append(int(line.strip()))
+        except Exception:
+            pass
+
+    # Server -> Client TTL
+    server_ttl_lines = run_tshark(
+        f"ip.src == {target_ip}",
+        ["-e", "ip.ttl"]
+    )
+
+    server_ttls = []
+
+    for line in server_ttl_lines:
+        try:
+            server_ttls.append(int(line.strip()))
+        except Exception:
+            pass
+    
+    rst_ttls = []
+
+    for r in rst_anomalies:
+        try:
+            rst_ttls.append(int(r["ttl"]))
+        except Exception:
+            pass
+
+    ttl_breakdown = {
+        "client_ttl": sorted(list(set(client_ttls))),
+        "server_ttl": sorted(list(set(server_ttls))),
+        "rst_ttl": sorted(list(set(rst_ttls))),
+    }
+
+    # RST sequence analysis
+    rst_seqs = set()
+    for r in rst_anomalies:
+        seq = r.get("seq")
+        if seq:
+            rst_seqs.add(seq)
 
     # TTL values
     ttl_lines = run_tshark(
@@ -214,6 +318,10 @@ def analyze(pcap_path: str, target_ip: str) -> dict:
     analysis = {
         "client_hellos": len(client_hellos),
         "client_hello_details": client_hellos[:5],
+        "rst_anomalies": len(rst_anomalies),
+        "suspicious_rst": suspicious_rst[:5],
+        "unique_rst_seqs": len(rst_seqs),
+        "ttl_breakdown": ttl_breakdown,
         "packet_sizes": size_stats,
         "timing": timing_stats,
         "total_packets": len(total_lines),
@@ -232,6 +340,9 @@ def analyze(pcap_path: str, target_ip: str) -> dict:
     print(f"    RST packets       : {analysis['rst_packets']}")
     print(f"    TLS alerts        : {analysis['tls_alerts']}")
     print(f"    Retransmissions   : {analysis['retransmissions']}")
+    print(f"    RST anomalies     : {analysis['rst_anomalies']}")
+    print(f"    Unique RST seqs   : {analysis['unique_rst_seqs']}")
+    print(f"    TTL breakdown     : client={ttl_breakdown['client_ttl']} server={ttl_breakdown['server_ttl']} rst={ttl_breakdown['rst_ttl']}")
     print(f"    TTL values seen   : {analysis['ttl_values']}")
     print(f"    ClientHellos      : {analysis['client_hellos']}")
     if client_hellos:
