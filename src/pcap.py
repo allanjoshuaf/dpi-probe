@@ -204,10 +204,13 @@ def analyze(pcap_path: str, target_ip: str) -> dict:
             pass
     
     rst_ttls = []
+    rst_ttl_count = {}
 
     for r in rst_anomalies:
         try:
-            rst_ttls.append(int(r["ttl"]))
+            ttl = int(r["ttl"])
+            rst_ttls.append(ttl)
+            rst_ttl_count[ttl] = rst_ttl_count.get(ttl, 0) + 1
         except Exception:
             pass
 
@@ -322,6 +325,7 @@ def analyze(pcap_path: str, target_ip: str) -> dict:
         "suspicious_rst": suspicious_rst[:5],
         "unique_rst_seqs": len(rst_seqs),
         "ttl_breakdown": ttl_breakdown,
+        "rst_ttl_count": rst_ttl_count,
         "packet_sizes": size_stats,
         "timing": timing_stats,
         "total_packets": len(total_lines),
@@ -339,6 +343,7 @@ def analyze(pcap_path: str, target_ip: str) -> dict:
     print(f"    Total packets     : {analysis['total_packets']}")
     print(f"    RST packets       : {analysis['rst_packets']}")
     print(f"    TLS alerts        : {analysis['tls_alerts']}")
+    print(f"    RST TTL count     : {rst_ttl_count}")
     print(f"    Retransmissions   : {analysis['retransmissions']}")
     print(f"    RST anomalies     : {analysis['rst_anomalies']}")
     print(f"    Unique RST seqs   : {analysis['unique_rst_seqs']}")
