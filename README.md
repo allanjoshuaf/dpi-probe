@@ -246,17 +246,17 @@ Reports and packet captures may expose your IP address, ISP, tested domains, tim
 - [x] Reliability indicator based on sample count
 
 ### Phase 4 - Fingerprinting
-- [ ] Capture response TTL
-- [ ] Compare response TTL vs baseline TTL
-- [ ] Optional PCAP export
-- [ ] Wireshark/tshark analysis helper
-- [ ] Hop count vs RTT mapping
+- [x] Capture response TTL
+- [x] Compare response TTL vs baseline TTL
+- [x] Optional PCAP export
+- [x] Wireshark/tshark analysis helper
 
 ### Phase 5 - Usability
 - [ ] `--quick`, `--full`, `--stealth` modes
 - [ ] Human-readable text report
-- [ ] Stable JSON schema with versioning
+- [x] Stable JSON schema with versioning
 - [ ] PyPI package
+  [x] anonymize
 
 ---
 

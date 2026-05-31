@@ -108,19 +108,25 @@ def build_tls_client_hello(sni: str) -> bytes:
     return record
     
 def test_sni(target_ip: str, sni: str, port: int = 443, timeout: float = 4.0) -> dict:
+    import time as _time
+
     result = {
         "sni": sni,
         "status": None,
         "rtt_ms": None,
         "response_type": None,
+        "start_time_epoch": None,
+        "end_time_epoch": None,
     }
+
+    result["start_time_epoch"] = _time.time()
 
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         s.settimeout(timeout)
-        start = time.time()
+        start = _time.time()
         s.connect((target_ip, port))
-        rtt = round((time.time() - start) * 1000, 2)
+        rtt = round((_time.time() - start) * 1000, 2)
         result["rtt_ms"] = rtt
 
         s.send(build_tls_client_hello(sni))
@@ -149,6 +155,8 @@ def test_sni(target_ip: str, sni: str, port: int = 443, timeout: float = 4.0) ->
     except Exception as e:
         result["status"] = "error"
         result["response_type"] = str(e)
+    finally:
+        result["end_time_epoch"] = _time.time()
 
     return result
 
