@@ -8,6 +8,7 @@ from src import report
 from src import config as cfg
 from src.tests import ip_block_test
 from src.tests import http_host_test
+from src import correlator
 
 class Probe:
     def __init__(self, target, samples=1, config=None, profile=None, pcap=False, pcap_interface=None):
@@ -127,6 +128,18 @@ class Probe:
             print(f"    [+] Capture stopped - {size} bytes saved")
             analysis = pcap_module.analyze(pcap_path, self.target)
             self.results["pcap"] = {"pcap_path": pcap_path, "analysis": analysis}
+
+        if self.pcap and self.results.get("pcap"):
+            sni_attempts = []
+            for r in self.results.get("sni", []):
+                if r.get("start_time_epoch"):
+                    sni_attempts.append(r)
+            
+            pcap_analysis = self.results["pcap"].get("analysis", {})
+            if pcap_analysis and sni_attempts:
+                correlation = correlator.correlate(sni_attempts, pcap_analysis)
+                correlator.print_summary(correlation)
+                self.results["pcap_correlation"] = correlation        
 
         r = report.generate(self.target, self.results, self.profile, self.samples)
         report.print_summary(r)

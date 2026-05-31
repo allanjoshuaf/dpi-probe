@@ -253,7 +253,10 @@ def analyze(pcap_path: str, target_ip: str) -> dict:
     # TLS ClientHello - SNI and version fingerprinting
     hello_lines = run_tshark(
         f"tls.handshake.type == 1 and ip.addr == {target_ip}",
-        ["-e", "frame.time_relative", "-e", "ip.src",
+        ["-e", "frame.time_epoch",
+         "-e", "frame.time_relative",
+         "-e", "ip.src",
+         "-e", "tcp.stream",
          "-e", "tls.handshake.extensions_server_name",
          "-e", "tls.handshake.version",
          "-e", "ip.ttl"]
@@ -261,13 +264,15 @@ def analyze(pcap_path: str, target_ip: str) -> dict:
     client_hellos = []
     for line in hello_lines:
         parts = line.split("\t")
-        if len(parts) >= 5:
+        if len(parts) >= 7:
             client_hellos.append({
-                "time": parts[0],
-                "src": parts[1],
-                "sni": parts[2],
-                "tls_version": parts[3],
-                "ttl": parts[4],
+                "time_epoch": parts[0],
+                "time": parts[1],
+                "src": parts[2],
+                "tcp_stream": parts[3],
+                "sni": parts[4],
+                "tls_version": parts[5],
+                "ttl": parts[6],
             })
 
     # Packet size distribution
