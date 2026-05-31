@@ -111,6 +111,7 @@ class Probe:
             ]
             print(f"\n[*] PCAP capture started - interface {interface}")
             proc = subprocess.Popen(cmd, stderr=subprocess.DEVNULL)
+            time.sleep(1.0)
 
         self.test_tcp_rst()
         self.test_plaintext_http()
@@ -132,8 +133,9 @@ class Probe:
         if self.pcap and self.results.get("pcap"):
             sni_attempts = []
             for r in self.results.get("sni", []):
-                if r.get("start_time_epoch"):
-                    sni_attempts.append(r)
+                for attempt in r.get("attempts", []):
+                    if attempt.get("start_time_epoch"):
+                        sni_attempts.append(attempt)
             
             pcap_analysis = self.results["pcap"].get("analysis", {})
             if pcap_analysis and sni_attempts:

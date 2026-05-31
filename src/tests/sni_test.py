@@ -178,11 +178,15 @@ def run(target_ip: str, samples: int = 1, config: dict = None):
     for sni in clean + blocked:
         rtts = []
         statuses = []
+        attempts = []
 
-        for _ in range(samples):
+        for attempt_index in range(samples):
             r = test_sni(target_ip, sni)
+            r["attempt"] = attempt_index + 1
+            r["category"] = "clean" if sni in clean else "blocked"
             rtts.append(r["rtt_ms"])
             statuses.append(r["response_type"])
+            attempts.append(r)
 
         stats = summarize(rtts)
         status_summary = summarize_status(statuses)
@@ -207,6 +211,7 @@ def run(target_ip: str, samples: int = 1, config: dict = None):
             "status_breakdown": status_summary["breakdown"],
             "rtt_stats": stats,
             "observation": "consistent_with_sni_filtering" if dominant == "silent_drop" else "no_filtering_observed",
+            "attempts": attempts,
         })
 
     return results

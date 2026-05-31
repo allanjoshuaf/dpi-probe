@@ -106,19 +106,48 @@ def analyze(pcap_path: str, target_ip: str) -> dict:
     # RST packets
     rst_lines = run_tshark(
         f"tcp.flags.reset == 1 and ip.addr == {target_ip}",
-        ["-e", "frame.time_relative", "-e", "ip.src", "-e", "ip.ttl"]
+        [
+            "-e", "frame.time_epoch",
+            "-e", "frame.time_relative",
+            "-e", "ip.src",
+            "-e", "ip.ttl",
+            "-e", "tcp.stream",
+        ]
     )
     rst_packets = []
     for line in rst_lines:
         parts = line.split("\t")
-        if len(parts) >= 3:
-            rst_packets.append({"time": parts[0], "src": parts[1], "ttl": parts[2]})
+        if len(parts) >= 5:
+            rst_packets.append({
+                "time_epoch": parts[0],
+                "time": parts[1],
+                "src": parts[2],
+                "ttl": parts[3],
+                "tcp_stream": parts[4],
+            })
 
     # Retransmissions
     retrans_lines = run_tshark(
         f"tcp.analysis.retransmission and ip.addr == {target_ip}",
-        ["-e", "frame.time_relative"]
+        [
+            "-e", "frame.time_epoch",
+            "-e", "frame.time_relative",
+            "-e", "ip.src",
+            "-e", "ip.ttl",
+            "-e", "tcp.stream",
+        ]
     )
+    retransmissions = []
+    for line in retrans_lines:
+        parts = line.split("\t")
+        if len(parts) >= 5:
+            retransmissions.append({
+                "time_epoch": parts[0],
+                "time": parts[1],
+                "src": parts[2],
+                "ttl": parts[3],
+                "tcp_stream": parts[4],
+            })
     # TCP window size anomalies
     window_lines = run_tshark(
         f"tcp.flags.reset == 1 and ip.addr == {target_ip}",
@@ -243,13 +272,25 @@ def analyze(pcap_path: str, target_ip: str) -> dict:
     # TLS alerts
     tls_lines = run_tshark(
         f"tls.record.content_type == 21 and ip.addr == {target_ip}",
-        ["-e", "frame.time_relative", "-e", "ip.src", "-e", "ip.ttl"]
+        [
+            "-e", "frame.time_epoch",
+            "-e", "frame.time_relative",
+            "-e", "ip.src",
+            "-e", "ip.ttl",
+            "-e", "tcp.stream",
+        ]
     )
     tls_alerts = []
     for line in tls_lines:
         parts = line.split("\t")
-        if len(parts) >= 3:
-            tls_alerts.append({"time": parts[0], "src": parts[1], "ttl": parts[2]})
+        if len(parts) >= 5:
+            tls_alerts.append({
+                "time_epoch": parts[0],
+                "time": parts[1],
+                "src": parts[2],
+                "ttl": parts[3],
+                "tcp_stream": parts[4],
+            })
     # TLS ClientHello - SNI and version fingerprinting
     hello_lines = run_tshark(
         f"tls.handshake.type == 1 and ip.addr == {target_ip}",
@@ -324,8 +365,9 @@ def analyze(pcap_path: str, target_ip: str) -> dict:
     )
 
     analysis = {
+        "target_ip": target_ip,
         "client_hellos": len(client_hellos),
-        "client_hello_details": client_hellos[:5],
+        "client_hello_details": client_hellos,
         "rst_anomalies": len(rst_anomalies),
         "suspicious_rst": suspicious_rst[:5],
         "unique_rst_seqs": len(rst_seqs),
@@ -335,10 +377,11 @@ def analyze(pcap_path: str, target_ip: str) -> dict:
         "timing": timing_stats,
         "total_packets": len(total_lines),
         "rst_packets": len(rst_packets),
-        "rst_details": rst_packets[:5],
+        "rst_details": rst_packets,
         "tls_alerts": len(tls_alerts),
-        "tls_alert_details": tls_alerts[:5],
-        "retransmissions": len(retrans_lines),
+        "tls_alert_details": tls_alerts,
+        "retransmissions": len(retransmissions),
+        "retransmission_details": retransmissions,
         "ttl_values": ttls,
         "ttl_min": min(ttls) if ttls else None,
         "ttl_max": max(ttls) if ttls else None,
