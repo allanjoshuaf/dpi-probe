@@ -9,6 +9,7 @@ from src import config as cfg
 from src.tests import ip_block_test
 from src.tests import http_host_test
 from src import correlator
+from src.tests import dns_test
 
 class Probe:
     def __init__(self, target, samples=1, config=None, profile=None, pcap=False, pcap_interface=None):
@@ -92,6 +93,11 @@ class Probe:
         results = http_host_test.run(self.config)
         self.results["http_host"] = results
 
+    def test_dns(self):
+        """DNS poisoning detection"""
+        results = dns_test.run(self.config)
+        self.results["dns"] = results
+
     def run(self):
         if self.pcap:
             from src import pcap as pcap_module
@@ -121,6 +127,7 @@ class Probe:
         self.test_malformed_tls()
         self.test_ip_blocking()
         self.test_http_host()
+        self.test_dns()
 
         if self.pcap:
             proc.terminate()
