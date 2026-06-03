@@ -10,6 +10,7 @@ from src.tests import ip_block_test
 from src.tests import http_host_test
 from src import correlator
 from src.tests import dns_test
+from src.tests import fragmentation_test
 
 class Probe:
     def __init__(self, target, samples=1, config=None, profile=None, pcap=False, pcap_interface=None):
@@ -98,6 +99,11 @@ class Probe:
         results = dns_test.run(self.config)
         self.results["dns"] = results
 
+    def test_fragmentation(self):
+        """TLS ClientHello segment split test"""
+        results = fragmentation_test.run(self.config, self.target)
+        self.results["fragmentation"] = results
+
     def run(self):
         if self.pcap:
             from src import pcap as pcap_module
@@ -128,6 +134,7 @@ class Probe:
         self.test_ip_blocking()
         self.test_http_host()
         self.test_dns()
+        self.test_fragmentation()
 
         if self.pcap:
             proc.terminate()
