@@ -94,13 +94,23 @@ def analyze(pcap_path: str, target_ip: str) -> dict:
     if not os.path.exists(pcap_path):
         return {"error": f"File not found: {pcap_path}"}
 
-    def run_tshark(filter_expr, fields):
-        cmd = [tshark, "-r", pcap_path, "-T", "fields",
+    print(f"\n[*] PCAP Analysis - {pcap_path}", flush=True)
+
+    def run_tshark(filter_expr, fields, timeout=15):
+        cmd = [tshark, "-n", "-r", pcap_path, "-T", "fields",
                "-Y", filter_expr] + fields
         try:
-            r = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+            if r.returncode != 0:
+                err = r.stderr.strip()
+                if err:
+                    print(f"    [!] tshark error for filter '{filter_expr}': {err}", flush=True)
             return [l.strip() for l in r.stdout.strip().split("\n") if l.strip()]
+        except subprocess.TimeoutExpired:
+            print(f"    [!] tshark timeout after {timeout}s for filter '{filter_expr}'", flush=True)
+            return []
         except Exception:
+            print(f"    [!] tshark failed for filter '{filter_expr}'", flush=True)
             return []
 
     # RST packets
@@ -387,35 +397,34 @@ def analyze(pcap_path: str, target_ip: str) -> dict:
         "ttl_max": max(ttls) if ttls else None,
     }
 
-    print(f"\n[*] PCAP Analysis - {pcap_path}")
-    print(f"    Total packets     : {analysis['total_packets']}")
-    print(f"    RST packets       : {analysis['rst_packets']}")
-    print(f"    TLS alerts        : {analysis['tls_alerts']}")
-    print(f"    RST TTL count     : {rst_ttl_count}")
-    print(f"    Retransmissions   : {analysis['retransmissions']}")
-    print(f"    RST anomalies     : {analysis['rst_anomalies']}")
-    print(f"    Unique RST seqs   : {analysis['unique_rst_seqs']}")
-    print(f"    TTL breakdown     : client={ttl_breakdown['client_ttl']} server={ttl_breakdown['server_ttl']} rst={ttl_breakdown['rst_ttl']}")
-    print(f"    TTL values seen   : {analysis['ttl_values']}")
-    print(f"    ClientHellos      : {analysis['client_hellos']}")
+    print(f"    Total packets     : {analysis['total_packets']}", flush=True)
+    print(f"    RST packets       : {analysis['rst_packets']}", flush=True)
+    print(f"    TLS alerts        : {analysis['tls_alerts']}", flush=True)
+    print(f"    RST TTL count     : {rst_ttl_count}", flush=True)
+    print(f"    Retransmissions   : {analysis['retransmissions']}", flush=True)
+    print(f"    RST anomalies     : {analysis['rst_anomalies']}", flush=True)
+    print(f"    Unique RST seqs   : {analysis['unique_rst_seqs']}", flush=True)
+    print(f"    TTL breakdown     : client={ttl_breakdown['client_ttl']} server={ttl_breakdown['server_ttl']} rst={ttl_breakdown['rst_ttl']}", flush=True)
+    print(f"    TTL values seen   : {analysis['ttl_values']}", flush=True)
+    print(f"    ClientHellos      : {analysis['client_hellos']}", flush=True)
     if client_hellos:
-        print(f"\n    ClientHello SNI details (first 3):")
+        print(f"\n    ClientHello SNI details (first 3):", flush=True)
         for h in client_hellos[:3]:
-            print(f"      t={h['time']}s sni={h['sni']} tls={h['tls_version']} ttl={h['ttl']}")
+            print(f"      t={h['time']}s sni={h['sni']} tls={h['tls_version']} ttl={h['ttl']}", flush=True)
     if size_stats:
-        print(f"\n    Packet sizes      : min={size_stats['min']}B avg={size_stats['avg']}B max={size_stats['max']}B")
+        print(f"\n    Packet sizes      : min={size_stats['min']}B avg={size_stats['avg']}B max={size_stats['max']}B", flush=True)
     if timing_stats:
-        print(f"    Inter-pkt timing  : min={timing_stats['min_ms']}ms avg={timing_stats['avg_ms']}ms max={timing_stats['max_ms']}ms")
+        print(f"    Inter-pkt timing  : min={timing_stats['min_ms']}ms avg={timing_stats['avg_ms']}ms max={timing_stats['max_ms']}ms", flush=True)
 
     if rst_packets:
-        print(f"\n    RST details (first 3):")
+        print(f"\n    RST details (first 3):", flush=True)
         for r in rst_packets[:3]:
-            print(f"      t={r['time']}s src={r['src']} ttl={r['ttl']}")
+            print(f"      t={r['time']}s src={r['src']} ttl={r['ttl']}", flush=True)
 
     if tls_alerts:
-        print(f"\n    TLS alert details (first 3):")
+        print(f"\n    TLS alert details (first 3):", flush=True)
         for a in tls_alerts[:3]:
-            print(f"      t={a['time']}s src={a['src']} ttl={a['ttl']}")
+            print(f"      t={a['time']}s src={a['src']} ttl={a['ttl']}", flush=True)
 
     return analysis
 

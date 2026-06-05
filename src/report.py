@@ -154,6 +154,34 @@ def generate(target: str, results: dict, profile: str = None, samples: int = 1) 
             "score": 0,
         }
 
+    # PCAP evidence is supporting evidence for the human report. It is kept
+    # non-scoring until packet-level attribution rules are stable.
+    pcap_analysis = (results.get("pcap") or {}).get("analysis") or {}
+    if pcap_analysis:
+        signals["pcap_capture"] = {
+            "observation": (
+                f"PCAP captured {pcap_analysis.get('total_packets', 0)} packet(s), "
+                f"{pcap_analysis.get('client_hellos', 0)} ClientHello(s), "
+                f"{pcap_analysis.get('tls_alerts', 0)} TLS alert(s), "
+                f"{pcap_analysis.get('rst_packets', 0)} RST packet(s), "
+                f"{pcap_analysis.get('retransmissions', 0)} retransmission(s)"
+            ),
+            "confidence": "info",
+            "score": 0,
+        }
+
+    pcap_correlation = results.get("pcap_correlation") or {}
+    if pcap_correlation:
+        correlated = [
+            domain for domain, data in pcap_correlation.items()
+            if data.get("evidence") and data.get("evidence") != "inconclusive"
+        ]
+        signals["pcap_correlation"] = {
+            "observation": f"PCAP correlated packet evidence for {len(correlated)} domain(s)",
+            "confidence": "info",
+            "score": 0,
+        }
+
     # Overall score and confidence
     total_weight = sum(s["score"] for s in signals.values())
     high_signals = [s for s in signals.values() if s["confidence"] == "high"]
@@ -194,6 +222,11 @@ def save(report: dict, path: str = None) -> str:
 
 def print_summary(report: dict):
     s = report["summary"]
+    tests = report.get("tests", {})
+    pcap = tests.get("pcap") or {}
+    pcap_analysis = pcap.get("analysis") or {}
+    pcap_correlation = tests.get("pcap_correlation") or {}
+
     print("\n" + "=" * 50)
     print(f"  DPI PROBE REPORT")
     print(f"  Target     : {report['meta']['target']}")
@@ -207,5 +240,43 @@ def print_summary(report: dict):
     print(f"  Reliability   : {reliability}")
     print(f"\n  Findings :")
     for f in s["findings"]:
-        print(f"    → {f}")
+        print(f"    -> {f}")
+
+    if pcap_analysis:
+        print(f"\n  PCAP evidence :")
+        if pcap.get("pcap_path"):
+            print(f"    Capture     : {pcap['pcap_path']}")
+        print(f"    Packets     : {pcap_analysis.get('total_packets', 0)}")
+        print(f"    ClientHello : {pcap_analysis.get('client_hellos', 0)}")
+        print(f"    TLS alerts  : {pcap_analysis.get('tls_alerts', 0)}")
+        print(f"    RST packets : {pcap_analysis.get('rst_packets', 0)}")
+        print(f"    Retransmits : {pcap_analysis.get('retransmissions', 0)}")
+
+        ttl_breakdown = pcap_analysis.get("ttl_breakdown") or {}
+        if ttl_breakdown:
+            print(
+                "    TTL         : "
+                f"client={ttl_breakdown.get('client_ttl', [])} "
+                f"server={ttl_breakdown.get('server_ttl', [])} "
+                f"rst={ttl_breakdown.get('rst_ttl', [])}"
+            )
+
+        rst_ttl_count = pcap_analysis.get("rst_ttl_count") or {}
+        if rst_ttl_count:
+            print(f"    RST TTL cnt : {rst_ttl_count}")
+
+    if pcap_correlation:
+        print(f"\n  Per-domain PCAP correlation :")
+        for domain, data in pcap_correlation.items():
+            evidence = data.get("evidence", "unknown")
+            print(
+                f"    {domain:<24} "
+                f"outcome={data.get('dominant_outcome', 'unknown'):<12} "
+                f"ch={data.get('client_hellos', 0)} "
+                f"alert={data.get('tls_alerts', 0)} "
+                f"rst={data.get('rst_packets', 0)} "
+                f"retrans={data.get('retransmissions', 0)} "
+                f"evidence={evidence}"
+            )
+
     print("=" * 50)

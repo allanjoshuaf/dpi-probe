@@ -13,7 +13,7 @@ from src.tests import dns_test
 from src.tests import fragmentation_test
 
 class Probe:
-    def __init__(self, target, samples=1, config=None, profile=None, pcap=False, pcap_interface=None):
+    def __init__(self, target, samples=1, config=None, profile=None, pcap=True, pcap_interface=None):
         self.target = target
         self.samples = samples
         self.config = config or cfg.load()
@@ -105,6 +105,12 @@ class Probe:
         self.results["fragmentation"] = results
 
     def run(self):
+        proc = None
+        pcap_path = None
+        pcap_module = None
+        os = None
+        subprocess = None
+
         if self.pcap:
             from src import pcap as pcap_module
             import os
@@ -121,28 +127,37 @@ class Probe:
                 "-w", pcap_path,
                 "-q",
             ]
-            print(f"\n[*] PCAP capture started - interface {interface}")
+            print(f"\n[*] PCAP capture started - interface {interface}", flush=True)
             proc = subprocess.Popen(cmd, stderr=subprocess.DEVNULL)
             time.sleep(1.0)
 
-        self.test_tcp_rst()
-        self.test_plaintext_http()
-        self.test_sni()
-        self.test_ttl()
-        self.test_rst()
-        self.test_malformed_tls()
-        self.test_ip_blocking()
-        self.test_http_host()
-        self.test_dns()
-        self.test_fragmentation()
+        try:
+            self.test_tcp_rst()
+            self.test_plaintext_http()
+            self.test_sni()
+            self.test_ttl()
+            self.test_rst()
+            self.test_malformed_tls()
+            self.test_ip_blocking()
+            self.test_http_host()
+            self.test_dns()
+            self.test_fragmentation()
+        finally:
+            if self.pcap and proc is not None:
+                if proc.poll() is None:
+                    proc.terminate()
+                    try:
+                        proc.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        proc.kill()
+                        proc.wait()
 
-        if self.pcap:
-            proc.terminate()
-            proc.wait()
-            size = os.path.getsize(pcap_path) if os.path.exists(pcap_path) else 0
-            print(f"    [+] Capture stopped - {size} bytes saved")
-            analysis = pcap_module.analyze(pcap_path, self.target)
-            self.results["pcap"] = {"pcap_path": pcap_path, "analysis": analysis}
+                size = os.path.getsize(pcap_path) if os.path.exists(pcap_path) else 0
+                print(f"    [+] Capture stopped - {size} bytes saved", flush=True)
+
+                if pcap_module is not None and pcap_path:
+                    analysis = pcap_module.analyze(pcap_path, self.target)
+                    self.results["pcap"] = {"pcap_path": pcap_path, "analysis": analysis}
 
         if self.pcap and self.results.get("pcap"):
             sni_attempts = []
