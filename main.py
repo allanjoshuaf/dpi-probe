@@ -9,7 +9,15 @@ from src.probe import Probe
 from src import autodetect
 from src import config as cfg
 
+def configure_console_encoding():
+    """Avoid Windows cp1252 crashes when printing Unicode status markers."""
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
+
 def main():
+    configure_console_encoding()
+
     parser = argparse.ArgumentParser(
         description="dpi-probe - detect and fingerprint DPI middleboxes"
     )
@@ -99,7 +107,8 @@ def main():
             print(f"\n{'='*50}")
             print(f"  Target : {t['name']} - {t['ip']}")
             print(f"{'='*50}")
-            probe = Probe(t["ip"], samples=args.samples, config=config, profile=args.profile, pcap=args.pcap, pcap_interface=args.pcap_interface)
+            pcap_enabled = args.pcap or (args.pcap_interface is not None)
+            probe = Probe(t["ip"], samples=args.samples, config=config, profile=args.profile, pcap=pcap_enabled, pcap_interface=args.pcap_interface)
             probe.run()
         sys.exit(0)
 
@@ -112,7 +121,8 @@ def main():
     if args.samples > 1:
         print(f"[*] Samples per test : {args.samples}")
 
-    probe = Probe(args.target, samples=args.samples, config=config, profile=args.profile, pcap=args.pcap, pcap_interface=args.pcap_interface)
+    pcap_enabled = args.pcap or (args.pcap_interface is not None)
+    probe = Probe(args.target, samples=args.samples, config=config, profile=args.profile, pcap=pcap_enabled, pcap_interface=args.pcap_interface)
     probe.run()
 
 if __name__ == "__main__":

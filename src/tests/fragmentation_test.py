@@ -6,10 +6,14 @@ def send_normal(s: socket.socket, payload: bytes) -> bytes:
     s.send(payload)
     return s.recv(4096)
 
-def send_fragmented(s: socket.socket, payload: bytes, fragment_at: int = None) -> bytes:
+def send_fragmented(s: socket.socket, payload: bytes, sni: str = None, fragment_at: int = None) -> bytes:
     s.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
     if fragment_at is None:
-        fragment_at = len(payload) // 2
+        if sni:
+            pos = payload.find(sni.encode())
+            fragment_at = pos + 3 if pos != -1 else len(payload) // 2
+        else:
+            fragment_at = len(payload) // 2
     s.sendall(payload[:fragment_at])
     time.sleep(0.05)
     s.sendall(payload[fragment_at:])
@@ -55,7 +59,7 @@ def test_domain(target_ip: str, sni: str, timeout: float = 4.0) -> dict:
         s.settimeout(timeout)
         s.connect((target_ip, 443))
         try:
-            r = send_fragmented(s, payload)
+            r = send_fragmented(s, payload, sni=sni)
             result["fragmented"] = interpret(r)
         except socket.timeout:
             result["fragmented"] = "silent_drop"
