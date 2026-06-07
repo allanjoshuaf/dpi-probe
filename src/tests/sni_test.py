@@ -1,6 +1,16 @@
 import socket
 import ssl
 import time
+from cryptography.hazmat.primitives.asymmetric import x25519
+from cryptography.hazmat.primitives import serialization
+
+private_key = x25519.X25519PrivateKey.generate()
+public_key = private_key.public_key().public_bytes(
+    encoding=serialization.Encoding.Raw,
+    format=serialization.PublicFormat.Raw
+)
+
+print(len(public_key))  # 32
 
 def build_tls_client_hello(sni: str) -> bytes:
     """Craft a realistic TLS ClientHello mimicking a real browser"""
@@ -62,7 +72,7 @@ def build_tls_client_hello(sni: str) -> bytes:
         b'\x00\x24' +
         b'\x00\x1d' +
         b'\x00\x20' +
-        b'\x00' * 32   # fake x25519 key
+        public_key
     )
 
     extensions = sni_ext + supported_groups + ec_point_formats + supported_versions + sig_algs + key_share
