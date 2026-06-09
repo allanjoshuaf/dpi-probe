@@ -75,7 +75,33 @@ def build_tls_client_hello(sni: str) -> bytes:
         public_key
     )
 
-    extensions = sni_ext + supported_groups + ec_point_formats + supported_versions + sig_algs + key_share
+    # PSK Key Exchange Modes (TLS 1.3)
+    psk_modes = (
+        b'\x00\x2d' +
+        b'\x00\x02' +
+        b'\x01' +
+        b'\x01'
+    )
+
+    # ALPN (HTTP/2 + HTTP/1.1)
+    alpn = (
+        b'\x00\x10' +
+        b'\x00\x0e' +
+        b'\x00\x0c' +
+        b'\x02' + b'h2' +
+        b'\x08' + b'http/1.1'
+    )   
+
+    extensions = (
+        sni_ext +
+        supported_groups +
+        ec_point_formats +
+        supported_versions +
+        sig_algs +
+        key_share +
+        psk_modes +
+        alpn
+    )
 
     # Cipher suites (modern browser selection)
     cipher_suites = (
@@ -90,11 +116,13 @@ def build_tls_client_hello(sni: str) -> bytes:
 
     import os
     random_bytes = os.urandom(32)
+    session_id = os.urandom(32)
 
     hello_body = (
         b'\x03\x03' +                               # legacy version
         random_bytes +                              # real random
-        b'\x00' +                                   # session ID length
+        len(session_id).to_bytes(1, 'big') +
+        session_id +
         len(cipher_suites).to_bytes(2, 'big') +
         cipher_suites +
         b'\x01\x00' +                               # compression
