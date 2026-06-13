@@ -11,6 +11,7 @@ from src.tests import http_host_test
 from src import correlator
 from src.tests import dns_test
 from src.tests import fragmentation_test
+from src.tests import bypass_test
 
 class Probe:
     def __init__(self, target, samples=1, config=None, profile=None, pcap=True, pcap_interface=None):
@@ -104,6 +105,11 @@ class Probe:
         results = fragmentation_test.run(self.config, self.target)
         self.results["fragmentation"] = results
 
+    def test_bypass(self):
+        """DPI bypass techniques — TLS record fragmentation"""
+        results = bypass_test.run(self.config, self.target)
+        self.results["bypass"] = results
+
     def run(self):
         proc = None
         pcap_path = None
@@ -142,6 +148,7 @@ class Probe:
             self.test_http_host()
             self.test_dns()
             self.test_fragmentation()
+            self.test_bypass()
         finally:
             if self.pcap and proc is not None:
                 if proc.poll() is None:
