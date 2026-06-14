@@ -63,6 +63,26 @@ def test_record_split(target_ip: str, sni: str, split_at: int, timeout: float = 
     except Exception as e:
         return f"error: {e}"
 
+def build_padded_hello(sni: str, padding_size: int) -> bytes:
+    return build_tls_client_hello(sni, padding_size=padding_size)
+
+def test_padding(target_ip: str, sni: str, padding_sizes: list, timeout: float = 4.0) -> dict:
+    results = {}
+    for size in padding_sizes:
+        try:
+            s = connect(target_ip, timeout)
+            s.sendall(build_padded_hello(sni, size))
+            try:
+                results[size] = interpret(s.recv(4096))
+            except socket.timeout:
+                results[size] = "silent_drop"
+            finally:
+                s.close()
+        except Exception as e:
+            results[size] = f"error: {e}"
+        time.sleep(0.1)
+    return results        
+
 def run(config: dict, target_ip: str = "1.1.1.1") -> list:
     blocked = config["domains"]["blocked"]
     clean = config["domains"]["clean"]
@@ -126,5 +146,36 @@ def run(config: dict, target_ip: str = "1.1.1.1") -> list:
             "possible_bypass": possible_bypass,
             "verdict": verdict,
         })
+
+    print("\n[*] DPI Bypass — Padding Extension\n")
+    padding_sizes = [64, 128, 256, 512]
+
+    for sni in clean + blocked:
+        normal = next((r["normal"] for r in results if r["sni"] == sni), None)
+        pad_results = test_padding(target_ip, sni, padding_sizes)
+
+        confirmed = [s for s, r in pad_results.items()
+                     if normal == "silent_drop" and r == "server_hello"]
+        possible = [s for s, r in pad_results.items()
+                    if normal == "silent_drop" and r == "tls_alert"]
+
+        verdict = "confirmed_bypass" if confirmed else \
+                  "possible_bypass" if possible else \
+                  "bypass_ineffective" if normal == "silent_drop" else \
+                  "no_blocking"
+
+        indicator = "!" if verdict == "confirmed_bypass" else \
+                    "?" if verdict == "possible_bypass" else \
+                    "+" if verdict == "no_blocking" else "x"
+
+        pad_summary = " | ".join(f"pad{s}={r}" for s, r in pad_results.items())
+        print(f"    [{indicator}] {sni:<25} {pad_summary}")
+
+        for r in results:
+            if r["sni"] == sni:
+                r["padding"] = pad_results
+                r["padding_bypass"] = bool(confirmed or possible)
+                r["padding_confirmed"] = confirmed
+                r["padding_possible"] = possible
 
     return results
