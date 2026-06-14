@@ -12,7 +12,7 @@ public_key = private_key.public_key().public_bytes(
 
 print(len(public_key))  # 32
 
-def build_tls_client_hello(sni: str) -> bytes:
+def build_tls_client_hello(sni: str, padding_size: int = 0) -> bytes:
     """Craft a realistic TLS ClientHello mimicking a real browser"""
     sni_bytes = sni.encode()
     sni_len = len(sni_bytes)
@@ -92,16 +92,16 @@ def build_tls_client_hello(sni: str) -> bytes:
         b'\x08' + b'http/1.1'
     )   
 
-    extensions = (
-        sni_ext +
-        supported_groups +
-        ec_point_formats +
-        supported_versions +
-        sig_algs +
-        key_share +
-        psk_modes +
-        alpn
-    )
+    # Padding extension (RFC 7685) — optional
+    padding_ext = b''
+    if padding_size > 0:
+        padding_ext = (
+            b'\x00\x15' +
+            padding_size.to_bytes(2, 'big') +
+            b'\x00' * padding_size
+        )
+
+    extensions = (sni_ext + supported_groups + ec_point_formats + supported_versions + sig_algs + key_share + psk_modes + alpn + padding_ext)
 
     # Cipher suites (modern browser selection)
     cipher_suites = (
