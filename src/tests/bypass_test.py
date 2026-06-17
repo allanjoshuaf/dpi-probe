@@ -49,6 +49,28 @@ def test_normal(target_ip: str, sni: str, timeout: float = 4.0) -> str:
 def test_record_split(target_ip: str, sni: str, split_at: int, timeout: float = 4.0) -> str:
     try:
         hello = build_tls_client_hello(sni)
+        needle = b"\x00\x17\x00\x18"
+        group_pos = hello.find(needle)
+
+        print(
+            f"SNI={sni} "
+            f"00170018_pos={group_pos}"
+        )
+        sni_pos = hello.find(sni.encode())
+        print(
+            f"SNI={sni} "
+            f"sni_start={sni_pos} "
+            f"sni_end={sni_pos + len(sni) - 1} "
+            f"split={split_at}"
+        )
+        if split_at == 128:
+            print("\n=== BYTES 120-136 ===")
+
+            for i in range(120, 137):
+                print(f"{i}: {hello[i]:02x}")
+
+            print("\n=== HEX 110-150 ===")
+            print(hello[110:150].hex())
         r1, r2 = split_clienthello_record(hello, split_at)
         s = connect(target_ip, timeout)
         s.sendall(r1)
@@ -83,11 +105,58 @@ def test_padding(target_ip: str, sni: str, padding_sizes: list, timeout: float =
         time.sleep(0.1)
     return results        
 
+def randomize_case(sni: str) -> str:
+    import random
+
+    while True:
+        variant = ''.join(
+            c.upper() if random.random() > 0.5 else c.lower()
+            for c in sni
+        )
+        if variant != sni:
+            return variant
+
+def test_case_randomization(target_ip: str, sni: str, attempts: int = 3, timeout: float = 4.0) -> dict:
+    results = []
+    variants = []
+    for _ in range(attempts):
+        variant = randomize_case(sni)
+        variants.append(variant)
+        try:
+            s = connect(target_ip, timeout)
+            s.sendall(build_tls_client_hello(variant))
+            try:
+                results.append(interpret(s.recv(4096)))
+            except socket.timeout:
+                results.append("silent_drop")
+            finally:
+                s.close()
+        except Exception as e:
+            results.append(f"error: {e}")
+        time.sleep(0.1)
+
+    bypasses = [r for r in results if r == "server_hello"]
+
+    if len(bypasses) == attempts:
+        verdict = "confirmed_bypass"
+    elif len(bypasses) > 0:
+        verdict = "possible_bypass"
+    else:
+        verdict = "bypass_ineffective"
+
+    return {
+        "sni": sni,
+        "variants_tested": variants,
+        "results": results,
+        "bypass_count": len(bypasses),
+        "verdict": verdict
+    }
+
 def run(config: dict, target_ip: str = "1.1.1.1") -> list:
     blocked = config["domains"]["blocked"]
     clean = config["domains"]["clean"]
 
-    split_positions = [32, 64, 80, 128]
+    split_positions = [128]
 
     print("\n[*] DPI Bypass — TLS Record Fragmentation")
     print(f"    Target        : {target_ip}:443")
@@ -99,9 +168,30 @@ def run(config: dict, target_ip: str = "1.1.1.1") -> list:
         normal = test_normal(target_ip, sni)
         splits = {}
 
-        for pos in split_positions:
+        hello = build_tls_client_hello(sni)
+
+        needle = b"\x00\x17\x00\x18"
+        pos = hello.find(needle)
+
+        if pos == -1:
+            print(f"[!] motif non trouvé pour {sni}")
+            continue
+
+        split_positions = [pos + 2]
+
+        print(
+            f"SNI={sni} "
+            f"00170018_pos={pos} "
+            f"dynamic_split={pos + 2}"
+        )
+
+        for split_at in split_positions:
             time.sleep(0.1)
-            splits[pos] = test_record_split(target_ip, sni, pos)
+            splits[split_at] = test_record_split(
+                target_ip,
+                sni,
+                split_at
+            )
 
         confirmed_bypass = [
             pos for pos, r in splits.items()
@@ -177,5 +267,28 @@ def run(config: dict, target_ip: str = "1.1.1.1") -> list:
                 r["padding_bypass"] = bool(confirmed or possible)
                 r["padding_confirmed"] = confirmed
                 r["padding_possible"] = possible
+
+    print("\n[*] DPI Bypass — SNI Case Randomization\n")
+
+    for sni in blocked:
+        r = test_case_randomization(target_ip, sni)
+
+        if r["verdict"] == "confirmed_bypass":
+            indicator = "!"
+        elif r["verdict"] == "possible_bypass":
+            indicator = "?"
+        else:
+            indicator = "x"
+
+        variants_str = " | ".join(
+            f"{v}={res}"
+            for v, res in zip(r["variants_tested"], r["results"])
+        )
+
+        print(f"    [{indicator}] {sni:<25} {variants_str}")
+
+        for existing in results:
+            if existing["sni"] == sni:
+                existing["case_randomization"] = r
 
     return results
