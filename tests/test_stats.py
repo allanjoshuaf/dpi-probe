@@ -1,8 +1,4 @@
-import sys
-import os
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-
-from stats import summarize, summarize_status
+from src.stats import summarize, summarize_status
 
 def test_summarize_basic():
     result = summarize([10.0, 20.0, 30.0])
@@ -23,6 +19,7 @@ def test_summarize_all_none():
     result = summarize([None, None])
     assert result["median_ms"] is None
     assert result["timeout_rate"] == 1.0
+    assert result["samples"] == 2
     print("✓ test_summarize_all_none")
 
 def test_summarize_status_basic():

@@ -1,8 +1,8 @@
 {
   "targets": [
-    {"ip": "1.1.1.1", "name": "Cloudflare DNS"},
-    {"ip": "8.8.8.8", "name": "Google DNS"},
-    {"ip": "9.9.9.9", "name": "Quad9 DNS"}
+    {"ip": "1.1.1.1", "name": "Cloudflare-operated anycast endpoint", "controlled": false},
+    {"ip": "8.8.8.8", "name": "Google-operated anycast endpoint", "controlled": false},
+    {"ip": "9.9.9.9", "name": "Quad9-operated anycast endpoint", "controlled": false}
   ],
   "domains": {
     "blocked": [
@@ -16,8 +16,12 @@
       "google.com",
       "github.com",
       "cloudflare.com",
-      "yandex.ru",
-      "rutube.ru"
+      "wikipedia.org",
+      "mozilla.org"
     ]
+  },
+  "methodology": {
+    "controlled_endpoint": false,
+    "warning": "These public IPs are not authoritative TLS/HTTP servers for every tested hostname. Results are differential observations only."
   }
 }

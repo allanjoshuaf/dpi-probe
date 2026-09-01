@@ -1,6 +1,6 @@
 import socket
 import time
-from src.tests.sni_test import build_tls_client_hello
+from src.probes.sni_test import build_tls_client_hello
 
 def send_normal(s: socket.socket, payload: bytes) -> bytes:
     s.sendall(payload)
@@ -17,7 +17,7 @@ def send_fragmented(s: socket.socket, payload: bytes, fragment_at: int) -> bytes
 
 def interpret(response: bytes) -> str:
     if not response:
-        return "silent_drop"
+        return "connection_closed_no_data"
     if response[0] == 0x15:
         return "tls_alert"
     if response[0] == 0x16:
@@ -45,7 +45,7 @@ def test_domain(target_ip: str, sni: str, timeout: float = 4.0) -> dict:
         try:
             result["normal"] = interpret(send_normal(s, payload))
         except socket.timeout:
-            result["normal"] = "silent_drop"
+            result["normal"] = "no_response_before_timeout"
         s.close()
     except Exception as e:
         result["normal"] = f"error: {e}"
@@ -84,7 +84,7 @@ def test_domain(target_ip: str, sni: str, timeout: float = 4.0) -> dict:
             try:
                 result["cuts"][cut_name] = interpret(send_fragmented(s, payload, cut_pos))
             except socket.timeout:
-                result["cuts"][cut_name] = "silent_drop"
+                result["cuts"][cut_name] = "no_response_before_timeout"
             s.close()
         except ConnectionResetError:
             result["cuts"][cut_name] = "rst"
@@ -95,14 +95,15 @@ def test_domain(target_ip: str, sni: str, timeout: float = 4.0) -> dict:
     # Verdict
     cut_results = list(result["cuts"].values())
 
-    if result["normal"] == "silent_drop" and any(
+    no_response = {"no_response_before_timeout", "connection_closed_no_data", "silent_drop"}
+    if result["normal"] in no_response and any(
         v in ("server_hello", "tls_alert") for v in cut_results
     ):
-        result["verdict"] = "possible_reassembly_gap"
-    elif result["normal"] == "silent_drop" and all(
-        v == "silent_drop" for v in cut_results
+        result["verdict"] = "outcome_changed_after_tcp_segmentation"
+    elif result["normal"] in no_response and all(
+        v in no_response for v in cut_results
     ):
-        result["verdict"] = "full_reassembly_confirmed"
+        result["verdict"] = "no_outcome_change_all_splits"
     elif (
         result["normal"] in ("server_hello", "tls_alert")
         and all(
@@ -110,7 +111,7 @@ def test_domain(target_ip: str, sni: str, timeout: float = 4.0) -> dict:
             for v in cut_results
         )
     ):
-        result["verdict"] = "no_blocking"
+        result["verdict"] = "response_for_all_segmentations"
     else:
         result["verdict"] = "inconclusive"
 
@@ -121,9 +122,9 @@ def run(config: dict, target_ip: str = "1.1.1.1") -> list:
     blocked = config["domains"]["blocked"]
     clean   = config["domains"]["clean"]
 
-    print("\n[*] SNI Cut-Point Fragmentation Test")
+    print("\n[*] TCP Write-Segmentation Differential Test")
     print(f"    Target : {target_ip}:443")
-    print(f"    Coupe le payload TCP à l'intérieur du SNI lui-même\n")
+    print("    This changes application write boundaries; it does not guarantee IP fragmentation.\n")
 
     results = []
 
@@ -134,37 +135,37 @@ def run(config: dict, target_ip: str = "1.1.1.1") -> list:
 
         verdict  = r["verdict"]
         indicator = (
-            "✓" if verdict == "no_blocking"             else
-            "!" if verdict == "possible_reassembly_gap" else
-            "✗" if verdict == "full_reassembly_confirmed" else
+            "✓" if verdict == "response_for_all_segmentations" else
+            "!" if verdict == "outcome_changed_after_tcp_segmentation" else
+            "?" if verdict == "no_outcome_change_all_splits" else
             "?"
         )
 
         print(f"    [{indicator}] {sni:<25} normal={r['normal']:<12} → {verdict}")
 
         for cut_name, cut_result in r["cuts"].items():
-            marker = "  ← BYPASS" if cut_result in ("server_hello", "tls_alert") else ""
+            marker = "  <- RESPONSE" if cut_result in ("server_hello", "tls_alert") else ""
             print(f"         {cut_name:<12} → {cut_result}{marker}")
 
         results.append(r)
 
     # Résumé
     print(f"\n[*] Summary")
-    gaps     = [r for r in results if r["verdict"] == "possible_reassembly_gap"]
-    full_ra  = [r for r in results if r["verdict"] == "full_reassembly_confirmed"]
-    no_block = [r for r in results if r["verdict"] == "no_blocking"]
+    gaps = [r for r in results if r["verdict"] == "outcome_changed_after_tcp_segmentation"]
+    full_ra = [r for r in results if r["verdict"] == "no_outcome_change_all_splits"]
+    no_block = [r for r in results if r["verdict"] == "response_for_all_segmentations"]
 
-    print(f"    no_blocking               : {len(no_block)}")
-    print(f"    full_reassembly_confirmed : {len(full_ra)}")
-    print(f"    possible_reassembly_gap   : {len(gaps)}")
+    print(f"    response_for_all_segmentations      : {len(no_block)}")
+    print(f"    no_outcome_change_all_splits        : {len(full_ra)}")
+    print(f"    outcome_changed_after_segmentation  : {len(gaps)}")
 
     if gaps:
-        print(f"\n    Gaps detected :")
+        print("\n    Outcome changes (attribution unresolved):")
         for r in gaps:
-            bypass_cuts = [
+            changed_cuts = [
                 name for name, val in r["cuts"].items()
                 if val in ("server_hello", "tls_alert")
             ]
-            print(f"      {r['sni']:<25} → {', '.join(bypass_cuts)}")
+            print(f"      {r['sni']:<25} → {', '.join(changed_cuts)}")
 
     return results

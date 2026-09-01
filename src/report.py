@@ -1,282 +1,271 @@
-import json
-import datetime
-import socket
-import uuid
+"""Build evidence-oriented reports without claiming more than the data shows."""
 
-def generate(target: str, results: dict, profile: str = None, samples: int = 1) -> dict:
-    report = {
-        "schema_version": "1.0",
+from __future__ import annotations
+
+import datetime
+import json
+import os
+import uuid
+from typing import Any
+
+
+NO_RESPONSE_OUTCOMES = {
+    "silent_drop",  # legacy reports
+    "timeout",
+    "no_response_before_timeout",
+    "connection_closed_no_data",
+    "eof",
+}
+RESPONSE_OUTCOMES = {"tls_alert", "server_hello", "ok", "response"}
+
+
+def _rows(value: Any) -> list[dict[str, Any]]:
+    """Return successful tabular probe output; ignore per-test error objects."""
+    if not isinstance(value, list):
+        return []
+    return [row for row in value if isinstance(row, dict)]
+
+
+def _mapping(value: Any) -> dict[str, Any]:
+    """Return a mapping or an empty one for a failed/legacy probe result."""
+    return value if isinstance(value, dict) else {}
+
+
+def _signal(
+    observation: str,
+    inference: str,
+    strength: str,
+    attribution: str = "unresolved",
+    limitations: list[str] | None = None,
+    consistency: float | None = None,
+) -> dict[str, Any]:
+    item: dict[str, Any] = {
+        "observation": observation,
+        "inference": inference,
+        "strength": strength,
+        "attribution": attribution,
+        "limitations": limitations or [],
+    }
+    if consistency is not None:
+        item["consistency"] = round(consistency, 3)
+    return item
+
+
+def _sni_evidence(results: dict[str, Any]) -> dict[str, Any] | None:
+    rows = _rows(results.get("sni"))
+    if not rows:
+        return None
+    no_response = [r for r in rows if r.get("dominant_response") in NO_RESPONSE_OUTCOMES]
+    responding_clean = [
+        r for r in rows
+        if r.get("category") == "clean" and r.get("dominant_response") in RESPONSE_OUTCOMES
+    ]
+    suspect_no_response = [r for r in no_response if r.get("category") == "blocked"]
+    if not suspect_no_response or not responding_clean:
+        return _signal(
+            observation="The crafted TLS probes did not produce a usable clean-versus-suspect differential.",
+            inference="No SNI-dependent path conclusion can be drawn from this run.",
+            strength="inconclusive",
+            limitations=["The destination is not a controlled TLS endpoint for every tested hostname."],
+        )
+
+    domains = [r.get("sni", "?") for r in suspect_no_response]
+    consistency_values = []
+    for row in suspect_no_response:
+        breakdown = row.get("status_breakdown") or {}
+        consistency_values.append(max(breakdown.values()) if breakdown else 0.0)
+    consistency = min(consistency_values) if consistency_values else 0.0
+
+    pcap_corr = _mapping(results.get("pcap_correlation"))
+    retransmitted = [
+        domain for domain in domains
+        if (pcap_corr.get(domain) or {}).get("retransmissions", 0) > 0
+        and (pcap_corr.get(domain) or {}).get("tls_alerts", 0) == 0
+    ]
+    strength = "strong" if retransmitted and consistency >= 0.8 else "moderate"
+    return _signal(
+        observation=(
+            f"On the same destination IP, {len(domains)} suspect hostname(s) had no TLS response "
+            f"while {len(responding_clean)} comparison hostname(s) received a TLS response: {', '.join(domains)}."
+        ),
+        inference=(
+            "The outcome depends on visible ClientHello content. This is compatible with on-path "
+            "SNI interference, but also with destination-side virtual-host policy."
+        ),
+        strength=strength,
+        attribution="on-path_or_destination",
+        limitations=[
+            "The target IP is not a controlled server for every hostname.",
+            "A timeout proves absence of a response before the deadline, not who discarded the packet.",
+        ],
+        consistency=consistency,
+    )
+
+
+def _collect_signals(results: dict[str, Any]) -> dict[str, Any]:
+    signals: dict[str, Any] = {}
+    sni = _sni_evidence(results)
+    if sni:
+        signals["tls_sni_differential"] = sni
+
+    ttl_analysis = _mapping(_mapping(results.get("ttl")).get("analysis"))
+    if ttl_analysis:
+        signals["ttl_reachability_samples"] = _signal(
+            observation=(
+                f"Sampled TTLs without a completed TCP connection: "
+                f"{ttl_analysis.get('non_connecting_ttls', ttl_analysis.get('silent_ttls', []))}; "
+                f"lowest sampled TTL that connected: {ttl_analysis.get('min_ttl_to_connect')}."
+            ),
+            inference="This bounds sampled reachability only; it does not identify a DPI hop.",
+            strength="context",
+            limitations=[
+                "TCP connect APIs do not expose every ICMP Time Exceeded message consistently.",
+                "The sampled TTL sequence is sparse and cannot locate an exact hop.",
+            ],
+        )
+
+    rst = _mapping(results.get("rst"))
+    if rst:
+        delay = (rst.get("response_delay") or rst.get("rst_timing") or {}).get("median_ms")
+        signals["post_connect_tcp_outcome"] = _signal(
+            observation=(
+                f"Dominant post-connect outcome: {rst.get('dominant_outcome', rst.get('dominant_verdict', 'unknown'))}; "
+                f"median delay: {delay} ms."
+            ),
+            inference="Timing alone cannot determine whether a reset/close came from the server or an intermediary.",
+            strength="context",
+            limitations=["Packet capture at one side cannot rule out source-address spoofing."],
+        )
+
+    malformed = _rows(results.get("malformed_tls"))
+    if malformed:
+        response_count = sum(
+            1 for row in malformed if row.get("dominant_response") in RESPONSE_OUTCOMES | {"tcp_reset"}
+        )
+        signals["malformed_tls_response_profile"] = _signal(
+            observation=f"{response_count}/{len(malformed)} malformed ClientHello variants received a response or reset.",
+            inference="At least one parser on the path or destination handled these inputs; its location is unknown.",
+            strength="context",
+            limitations=["Response latency is not comparable to TCP handshake RTT without a controlled server baseline."],
+        )
+
+    ip_rows = _rows(results.get("ip_blocking"))
+    destination_dependent = [r for r in ip_rows if r.get("classification") in {"destination_dependent", "sni_ip_correlation"}]
+    if destination_dependent:
+        signals["destination_dependent_tls_outcome"] = _signal(
+            observation=f"TLS outcomes differed across destination IPs for {len(destination_dependent)} hostname(s).",
+            inference="Destination address affects the outcome; this does not identify whether policy is on-path or server-side.",
+            strength="moderate",
+            limitations=["The destination IPs are operated by different providers and are not equivalent controlled endpoints."],
+        )
+
+    http_rows = _rows(results.get("http_host"))
+    host_dependent = [r for r in http_rows if r.get("classification") in {"host_dependent_no_response", "host_dependent_reset", "host_filtered", "host_rst"}]
+    if host_dependent:
+        signals["http_host_differential"] = _signal(
+            observation=f"HTTP outcomes differed by Host header for {len(host_dependent)} hostname(s).",
+            inference="Visible HTTP Host content affects the result, either on-path or at the destination.",
+            strength="moderate",
+            limitations=["The target is not a controlled HTTP virtual host for all tested names."],
+        )
+
+    dns_rows = _rows(results.get("dns"))
+    divergent = [r for r in dns_rows if r.get("verdict") in {"divergent", "resolver_divergence", "possible_poisoning", "suspicious_resolution"}]
+    if divergent:
+        signals["dns_resolver_divergence"] = _signal(
+            observation=f"System and public resolvers returned different result sets for {len(divergent)} hostname(s).",
+            inference="Resolver views differ; CDN geolocation, split DNS, filtering, or manipulation are all possible.",
+            strength="context",
+            limitations=["Non-overlapping CDN answers are normal and do not prove DNS poisoning."],
+        )
+
+    pcap_analysis = _mapping(_mapping(results.get("pcap")).get("analysis"))
+    if pcap_analysis and not pcap_analysis.get("error"):
+        signals["packet_capture"] = _signal(
+            observation=(
+                f"Capture contains {pcap_analysis.get('total_packets', 0)} packets, "
+                f"{pcap_analysis.get('retransmissions', 0)} retransmissions, "
+                f"{pcap_analysis.get('rst_packets', 0)} resets "
+                f"({pcap_analysis.get('rst_with_target_source_ip', 'unknown')} with the target source IP) and "
+                f"{pcap_analysis.get('tls_alerts', 0)} TLS alerts."
+            ),
+            inference="Packet evidence strengthens transport observations but one-sided capture does not locate a drop hop.",
+            strength="direct_observation",
+            attribution="client_vantage_only",
+        )
+    return signals
+
+
+def _assessment(signals: dict[str, Any], samples: int) -> tuple[str, str]:
+    differential = signals.get("tls_sni_differential") or {}
+    if differential.get("strength") == "strong":
+        # Strong repeatability is still behavior, not attributed interference,
+        # while the target is not a controlled endpoint for every hostname.
+        return "content_dependent_behavior_observed", "moderate" if samples >= 3 else "low"
+    if differential.get("strength") == "moderate":
+        return "content_dependent_behavior_observed", "low" if samples < 3 else "moderate"
+    if signals:
+        return "inconclusive", "low"
+    return "insufficient_data", "none"
+
+
+def generate(target: str, results: dict, profile: str | None = None, samples: int = 1) -> dict:
+    signals = _collect_signals(results)
+    assessment, confidence = _assessment(signals, samples)
+    return {
+        "schema_version": "2.0",
         "meta": {
             "run_id": str(uuid.uuid4()),
             "target": target,
-            "timestamp": datetime.datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z"),
             "tool": "dpi-probe",
-            "version": "0.1.0",
+            "version": "0.2.0-alpha",
             "profile": profile,
             "samples": samples,
         },
         "summary": {
-            "dpi_detected": False,
-            "confidence": None,
-            "signals": {},
-            "findings": [],
+            "assessment": assessment,
+            "dpi_detected": None,
+            "confidence": confidence,
+            "signals": signals,
+            "findings": [item["observation"] for item in signals.values()],
+            "limitations": [
+                "This run does not identify a specific DPI appliance or physical hop.",
+                "Attribution requires a controlled endpoint or synchronized captures at both client and server.",
+                "No response before a timeout is an observation, not proof of intentional dropping.",
+            ],
         },
         "tests": results,
     }
 
-    findings = []
-    signals = {}
 
-    # SNI
-    sni_results = results.get("sni", []) or []
-    blocked = [r for r in sni_results if r.get("dominant_response") == "silent_drop"]
-    clean_pass = [r for r in sni_results if r.get("category") == "clean" and r.get("dominant_response") in ["tls_alert", "server_hello"]]
-
-    if blocked and clean_pass:
-        domains = [r["sni"] for r in blocked]
-        consistency = min([r["status_breakdown"].get("silent_drop", 0) for r in blocked])
-        signals["sni_filtering"] = {
-            "observation": f"silent_drop on {len(blocked)} domain(s): {', '.join(domains)}",
-            "consistency": f"{int(consistency * 100)}%",
-            "confidence": "high" if consistency >= 0.9 else "medium",
-            "score": 3,
-        }
-        findings.append(f"SNI filtering observed for: {', '.join(domains)}")
-    elif blocked:
-        signals["sni_filtering"] = {
-            "observation": "silent_drop detected but no clean baseline to compare",
-            "confidence": "low",
-            "score": 1,
-        }
-
-    # TTL
-    ttl = results.get("ttl", {})
-    analysis = ttl.get("analysis", {})
-    silent_ttls = analysis.get("silent_ttls", [])
-    if silent_ttls and analysis.get("min_ttl_to_connect"):
-        signals["ttl_suppression"] = {
-            "observation": f"No ICMP TTL exceeded on hops {silent_ttls}, first connection at TTL {analysis['min_ttl_to_connect']}",
-            "confidence": "medium",
-            "score": 2,
-        }
-        findings.append(f"TTL/ICMP behavior consistent with suppression at hops {silent_ttls}")
-
-    # RST
-    rst = results.get("rst", {})
-    dominant_verdict = rst.get("dominant_verdict")
-    ratio = rst.get("ratio")
-    if dominant_verdict == "middlebox":
-        signals["rst_timing"] = {
-            "observation": f"Response timing {ratio}x baseline - consistent with closer responder",
-            "confidence": "medium",
-            "score": 2,
-        }
-        findings.append(f"RST timing consistent with closer responder - {ratio}x baseline")
-    elif dominant_verdict == "ambiguous" and ratio and ratio < 0.5:
-        signals["rst_timing"] = {
-            "observation": f"RST timing {ratio}x baseline - inconclusive without packet capture",
-            "confidence": "low",
-            "score": 1,
-        }
-    else:
-        signals["rst_timing"] = {
-            "observation": f"RST timing {ratio}x baseline - no anomaly detected",
-            "confidence": "none",
-            "score": 0,
-        }
-
-    # Malformed TLS
-    malformed = results.get("malformed_tls", []) or []
-    clean_rtts = [
-        r["rtt_stats"]["median_ms"] for r in sni_results
-        if r.get("category") == "clean" and r.get("rtt_stats", {}).get("median_ms")
-    ]
-    clean_baseline = sorted(clean_rtts)[len(clean_rtts)//2] if clean_rtts else None
-
-    if clean_baseline:
-        fast = [r for r in malformed if r.get("rtt_stats", {}).get("median_ms") and r["rtt_stats"]["median_ms"] < clean_baseline * 0.6]
-        if fast:
-            signals["tls_parser"] = {
-                "observation": f"{len(fast)} malformed TLS variant(s) responded faster than clean SNI baseline ({clean_baseline}ms)",
-                "confidence": "medium",
-                "score": 2,
-            }
-            findings.append("Malformed TLS responses faster than clean SNI baseline - timing consistent with middlebox TLS parser")
-        else:
-            signals["tls_parser"] = {
-                "observation": f"Malformed TLS responses within clean SNI baseline range ({clean_baseline}ms)  inconclusive",
-                "confidence": "low",
-                "score": 0,
-            }
-
-    # IP Blocking classification
-    ip_blocking = results.get("ip_blocking", []) or []
-    pure_sni = [r for r in ip_blocking if r.get("classification") == "pure_sni_filtering"]
-    sni_ip_corr = [r for r in ip_blocking if r.get("classification") == "sni_ip_correlation"]
-
-    if pure_sni:
-        domains = [r["sni"] for r in pure_sni]
-        signals["ip_blocking"] = {
-            "observation": f"pure SNI filtering on {len(pure_sni)} domain(s): {', '.join(domains)}",
-            "confidence": "high",
-            "score": 2,
-        }
-        findings.append(f"Pure SNI filtering observed across all tested IPs: {', '.join(domains)}")
-
-    if sni_ip_corr:
-        domains = [r["sni"] for r in sni_ip_corr]
-        signals["sni_ip_correlation"] = {
-            "observation": f"SNI+IP correlation on {len(sni_ip_corr)} domain(s): {', '.join(domains)}",
-            "confidence": "medium",
-            "score": 1,
-        }
-        findings.append(f"SNI+IP correlation observed: {', '.join(domains)}")
-
-    # HTTP Host filtering
-    http_host = results.get("http_host", []) or []
-    host_filtered = [r for r in http_host if r.get("classification") == "host_filtered"]
-    host_403 = [r for r in http_host if r.get("classification") == "response_403"]
-
-    if host_filtered:
-        domains = [r["host"] for r in host_filtered]
-        signals["http_host_filtering"] = {
-            "observation": f"HTTP Host filtering on {len(host_filtered)} domain(s): {', '.join(domains)}",
-            "confidence": "medium",
-            "score": 1,
-        }
-        findings.append(f"HTTP Host header filtering observed: {', '.join(domains)}")
-
-    if host_403:
-        domains = [r["host"] for r in host_403]
-        signals["http_403_response"] = {
-            "observation": f"HTTP 403 on {len(host_403)} domain(s): {', '.join(domains)} - likely server-side, not DPI",
-            "confidence": "low",
-            "score": 0,
-        }
-
-    # PCAP evidence is supporting evidence for the human report. It is kept
-    # non-scoring until packet-level attribution rules are stable.
-    pcap_analysis = (results.get("pcap") or {}).get("analysis") or {}
-    if pcap_analysis:
-        signals["pcap_capture"] = {
-            "observation": (
-                f"PCAP captured {pcap_analysis.get('total_packets', 0)} packet(s), "
-                f"{pcap_analysis.get('client_hellos', 0)} ClientHello(s), "
-                f"{pcap_analysis.get('tls_alerts', 0)} TLS alert(s), "
-                f"{pcap_analysis.get('rst_packets', 0)} RST packet(s), "
-                f"{pcap_analysis.get('retransmissions', 0)} retransmission(s)"
-            ),
-            "confidence": "info",
-            "score": 0,
-        }
-
-    pcap_correlation = results.get("pcap_correlation") or {}
-    if pcap_correlation:
-        correlated = [
-            domain for domain, data in pcap_correlation.items()
-            if data.get("evidence") and data.get("evidence") != "inconclusive"
-        ]
-        signals["pcap_correlation"] = {
-            "observation": f"PCAP correlated packet evidence for {len(correlated)} domain(s)",
-            "confidence": "info",
-            "score": 0,
-        }
-
-    # Overall score and confidence
-    total_weight = sum(s["score"] for s in signals.values())
-    high_signals = [s for s in signals.values() if s["confidence"] == "high"]
-    medium_signals = [s for s in signals.values() if s["confidence"] == "medium"]
-
-    if high_signals and medium_signals:
-        confidence = "high"
-    elif high_signals or len(medium_signals) >= 2:
-        confidence = "medium"
-    elif medium_signals:
-        confidence = "low"
-    else:
-        confidence = "none"
-
-    report["summary"]["dpi_detected"] = total_weight >= 3
-    report["summary"]["confidence"] = confidence
-    max_score = sum([3, 2, 2, 2, 2, 1, 1])  # SNI + TTL + RST + TLS + ip_blocking + sni_ip_corr + http_host
-    report["summary"]["score"] = f"{total_weight}/{max_score}"
-    report["summary"]["signals"] = signals
-    report["summary"]["findings"] = findings
-
-    return report
-
-def save(report: dict, path: str = None) -> str:
-    import os
+def save(report: dict, path: str | None = None) -> str:
     os.makedirs("reports", exist_ok=True)
-
     if not path:
-        target = report["meta"]["target"].replace(".", "_")
-        ts = datetime.datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+        target = str(report["meta"]["target"]).replace(".", "_").replace(":", "_")
+        ts = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%d_%H%M%S")
         path = f"reports/report_{target}_{ts}.json"
-
-    with open(path, "w") as f:
-        json.dump(report, f, indent=2)
-
+    with open(path, "w", encoding="utf-8") as handle:
+        json.dump(report, handle, indent=2, ensure_ascii=False)
     return path
 
 
-def print_summary(report: dict):
-    s = report["summary"]
-    tests = report.get("tests", {})
-    pcap = tests.get("pcap") or {}
-    pcap_analysis = pcap.get("analysis") or {}
-    pcap_correlation = tests.get("pcap_correlation") or {}
-
-    print("\n" + "=" * 50)
-    print(f"  DPI PROBE REPORT")
-    print(f"  Target     : {report['meta']['target']}")
-    print(f"  Timestamp  : {report['meta']['timestamp']}")
-    print("=" * 50)
-    print(f"  DPI detected  : {'YES' if s['dpi_detected'] else 'NO'}")
-    print(f"  Confidence    : {s['confidence'].upper()}")
-    print(f"  Signal score  : {s['score']}")
-    samples = report.get("meta", {}).get("samples", 1)
-    reliability = "low (samples=1)" if samples <= 1 else f"medium (samples={samples})" if samples < 5 else f"high (samples={samples})"
-    print(f"  Reliability   : {reliability}")
-    print(f"\n  Findings :")
-    for f in s["findings"]:
-        print(f"    -> {f}")
-
-    if pcap_analysis:
-        print(f"\n  PCAP evidence :")
-        if pcap.get("pcap_path"):
-            print(f"    Capture     : {pcap['pcap_path']}")
-        print(f"    Packets     : {pcap_analysis.get('total_packets', 0)}")
-        print(f"    ClientHello : {pcap_analysis.get('client_hellos', 0)}")
-        print(f"    TLS alerts  : {pcap_analysis.get('tls_alerts', 0)}")
-        print(f"    RST packets : {pcap_analysis.get('rst_packets', 0)}")
-        print(f"    Retransmits : {pcap_analysis.get('retransmissions', 0)}")
-
-        ttl_breakdown = pcap_analysis.get("ttl_breakdown") or {}
-        if ttl_breakdown:
-            print(
-                "    TTL         : "
-                f"client={ttl_breakdown.get('client_ttl', [])} "
-                f"server={ttl_breakdown.get('server_ttl', [])} "
-                f"rst={ttl_breakdown.get('rst_ttl', [])}"
-            )
-
-        rst_ttl_count = pcap_analysis.get("rst_ttl_count") or {}
-        if rst_ttl_count:
-            print(f"    RST TTL cnt : {rst_ttl_count}")
-
-    if pcap_correlation:
-        print(f"\n  Per-domain PCAP correlation :")
-        for domain, data in pcap_correlation.items():
-            evidence = data.get("evidence", "unknown")
-            print(
-                f"    {domain:<24} "
-                f"outcome={data.get('dominant_outcome', 'unknown'):<12} "
-                f"ch={data.get('client_hellos', 0)} "
-                f"alert={data.get('tls_alerts', 0)} "
-                f"rst={data.get('rst_packets', 0)} "
-                f"retrans={data.get('retransmissions', 0)} "
-                f"evidence={evidence}"
-            )
-
-    print("=" * 50)
+def print_summary(report: dict) -> None:
+    summary = report["summary"]
+    print("\n" + "=" * 64)
+    print("  DPI-PROBE EVIDENCE REPORT")
+    print(f"  Target      : {report['meta']['target']}")
+    print(f"  Timestamp   : {report['meta']['timestamp']}")
+    print("=" * 64)
+    print(f"  Assessment  : {summary['assessment']}")
+    print(f"  Confidence  : {summary['confidence']}")
+    print("  DPI located : NO - attribution requires dual-vantage evidence")
+    print("\n  Evidence:")
+    for name, signal in summary["signals"].items():
+        print(f"    - {name} [{signal['strength']}]")
+        print(f"      observed : {signal['observation']}")
+        print(f"      inference: {signal['inference']}")
+    print("\n  Main limitations:")
+    for limitation in summary["limitations"]:
+        print(f"    - {limitation}")
+    print("=" * 64)

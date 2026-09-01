@@ -84,10 +84,10 @@ def classify(system_result: dict, reference_results: list) -> tuple:
 
     Possible classifications:
 
-        clean
-        suspicious_resolution
-        possible_poisoning
-        no_response
+        consistent
+        divergent
+        special_use_answer
+        inconclusive
     """
     system_ips = system_result.get("ips", [])
 
@@ -102,7 +102,7 @@ def classify(system_result: dict, reference_results: list) -> tuple:
         and len(reference_ips) > 0
     ):
         return (
-            "possible_poisoning",
+            "divergent",
             ["local_nxdomain_public_resolves"]
         )
 
@@ -111,14 +111,14 @@ def classify(system_result: dict, reference_results: list) -> tuple:
 
     if bogons:
         return (
-            "possible_poisoning",
+            "special_use_answer",
             [f"bogon_ip:{ip}" for ip in bogons]
         )
 
     # No response from the local resolver
     if not system_ips:
         return (
-            "no_response",
+            "inconclusive",
             [system_result["status"]]
         )
 
@@ -126,14 +126,11 @@ def classify(system_result: dict, reference_results: list) -> tuple:
     # with any public resolver results
     if reference_ips and not set(system_ips).intersection(reference_ips):
         return (
-            "suspicious_resolution",
+            "divergent",
             ["ip_mismatch_with_public_resolvers"]
         )
 
-    return (
-        "clean",
-        []
-    )
+    return ("consistent", [])
 
 
 def run(config: dict) -> list:
@@ -142,7 +139,7 @@ def run(config: dict) -> list:
 
     domains = clean + blocked
 
-    print("\n[*] DNS Poisoning Test")
+    print("\n[*] DNS Resolver-Divergence Test")
     print(f"    Testing {len(domains)} domains\n")
 
     results = []
@@ -170,12 +167,12 @@ def run(config: dict) -> list:
             reference_results
         )
 
-        if verdict == "clean":
+        if verdict == "consistent":
             indicator = "✓"
-        elif verdict == "possible_poisoning":
-            indicator = "✗"
-        else:
+        elif verdict in {"divergent", "special_use_answer"}:
             indicator = "⚠"
+        else:
+            indicator = "?"
 
         print(
             f"    [{indicator}] "
@@ -195,6 +192,8 @@ def run(config: dict) -> list:
             ),
             "verdict": verdict,
             "flags": flags,
+            "attribution": "unresolved",
+            "limitation": "Different CDN or resolver views can legitimately return non-overlapping addresses.",
             "system": resolver_results["system"],
             "cloudflare": resolver_results["cloudflare"],
             "google": resolver_results["google"],
