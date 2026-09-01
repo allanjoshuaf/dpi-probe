@@ -1,273 +1,229 @@
 # dpi-probe
 
-`dpi-probe` is a Python tool for detecting and fingerprinting traffic interference on the local network path.
+`dpi-probe` collects repeatable evidence about content-dependent network
+behavior and tunnel failures. It deliberately does **not** turn every timeout,
+RST, DNS difference, or missing ICMP reply into a claim that a DPI was found.
 
-It probes whether TLS SNI, destination IP, HTTP Host headers, malformed TLS payloads, TTL behavior, or TCP reset timing are being filtered, dropped, injected, or modified by a DPI/middlebox.
+The report keeps four things separate:
 
-> Status: public alpha. Results should be interpreted as network evidence, not forensic proof without packet captures.
+1. what was observed;
+2. what the observation is compatible with;
+3. what can be attributed to the path, destination, client, or server;
+4. what evidence is still missing.
 
----
+Status: public alpha. Use only on networks and endpoints you are authorized to
+test.
 
-## What It Tests
+The complete technical review is in [AUDIT_TECHNIQUE.md](AUDIT_TECHNIQUE.md),
+and the command-by-command personal guide is in
+[GUIDE_UTILISATEUR.md](GUIDE_UTILISATEUR.md).
 
-- TCP reachability on port 443
-- Plain HTTP behavior on port 80
-- TLS SNI filtering using crafted ClientHello packets
-- Clean vs blocked domain differential behavior
-- TTL hop behavior and ICMP suppression patterns
-- RST/response timing compared to baseline RTT
-- Malformed TLS ClientHello responses
-- Repeated samples with median, p95, variance, and consistency rates
-- JSON report with per-signal confidence levels
+## Install and verify
 
----
+```powershell
+py -m pip install -r requirements.txt
+py -m pip install -r requirements-dev.txt
+py -m pytest -q
+py -m coverage run --source=src -m pytest -q
+py -m coverage report --omit="src/probes/*"
+py main.py --help
+```
 
-## Prerequisites
+Python 3.11+ is required. PCAP analysis requires Wireshark/TShark. Live capture
+on Windows also requires Npcap and appropriate privileges.
 
-- Python 3.11+
-- For `--pcap` mode: Wireshark with tshark
+The test suite currently contains 38 tests and is also run on GitHub for Python
+3.11 and 3.13. Field captures and session notes are deliberately ignored by
+Git because they can contain endpoint addresses and browsing metadata.
 
-Install Wireshark from https://www.wireshark.org/download.html and check "Install TShark" and "Install Npcap" during setup.
-
-Find your active interface:
-```bash
+```powershell
 py -c "from src import pcap; [print(i) for i in pcap.list_interfaces()]"
 ```
 
-Then pass it with `--pcap-interface N`.
+## Measurement modes
 
-## Usage
-
-```bash
-# Auto-detect local traffic interference
+```powershell
+# Lightweight differential observation
 py main.py
 
-# Probe a specific target
-py main.py 1.1.1.1
+# Full probe against one measurement endpoint
+py main.py 1.1.1.1 --samples 3 --profile direct
 
-# Repeat each probe 3 times
-py main.py 1.1.1.1 --samples 3
+# Capture the full probe on a verified interface
+py main.py 1.1.1.1 --samples 3 --pcap --pcap-interface 3
 
-# Tag the network condition
-py main.py 1.1.1.1 --samples 3 --profile no-vpn
-py main.py 1.1.1.1 --samples 3 --profile adguard
-py main.py 1.1.1.1 --samples 3 --profile reality
+# Compare two reports, for example direct versus tunnel
+py main.py --compare reports\direct.json reports\reality.json
 
-# Probe all configured targets from targets.json
-py main.py --multi --samples 3 --profile no-vpn
-
-# Compare two reports
-py main.py --compare reports/report_A.json reports/report_B.json
-
-# Show version
-py main.py --version
+# Inspect ECH advertisement and local runtime capability
+py main.py --ech cloudflare-ech.com
 ```
 
-Targeted probes save JSON reports in the `reports/` directory.
+The public IPs in `targets.json` are non-controlled anycast measurement
+endpoints. They are not authoritative TLS/HTTP servers for every test name.
+Consequently, an SNI- or Host-dependent difference is useful evidence but does
+not by itself separate an on-path action from destination-side virtual-host
+policy.
 
-## Configuration
+## Diagnose sing-box VLESS/REALITY
 
-Targets and domain lists are loaded from `targets.json`.
+The tunnel diagnosis accepts any combination of a sing-box configuration,
+timestamped log, client PCAP, local Clash API, and active endpoint checks.
+Credentials are reduced to booleans/lengths and are not copied into the report.
+
+```powershell
+py main.py --diagnose-tunnel `
+  --sing-box-config C:\path\config.json `
+  --sing-box-log C:\path\box.log `
+  --tunnel-pcap C:\path\client.pcapng `
+  --tunnel-endpoint SERVER_IP:443
+```
+
+Optional endpoint checks:
+
+```powershell
+py main.py --diagnose-tunnel `
+  --sing-box-config C:\path\config.json `
+  --tunnel-endpoint SERVER_IP:443 `
+  --active-tunnel-checks `
+  --underlay-interface-index 18
+```
+
+Optional local Clash API snapshot (keep the API bound to loopback):
+
+```powershell
+$env:DPI_PROBE_CLASH_SECRET = "your-secret"
+py main.py --diagnose-tunnel `
+  --sing-box-api http://127.0.0.1:9090 `
+  --sing-box-secret-env DPI_PROBE_CLASH_SECRET
+```
+
+The diagnosis labels per-stream phases such as:
+
+- TCP handshake absent;
+- TCP established but first client payload unanswered;
+- bidirectional encrypted data established;
+- established flow later retransmitting;
+- client cleanup reset after unanswered data;
+- apparent target-direction reset.
+- late target-direction reset after an already orderly FIN/FIN close.
+
+On Windows, `--underlay-interface-index` is important when a TUN owns the
+default route. It binds endpoint TCP/TLS checks to the physical interface;
+without it, the test can loop through the tunnel it is trying to measure.
+
+This finds **when** a tunnel fails from one vantage. It does not find the exact
+router.
+
+## Locate direction and reset origin with two PCAPs
+
+For useful attribution, capture the same failure window at both ends:
+
+```powershell
+# Client, use the correct interface number
+tshark -i 3 -f "host SERVER_IP and tcp port 443" -w client.pcapng
+```
+
+```bash
+# VPS/server
+sudo tcpdump -i any -nn 'tcp port 443' -w server.pcap
+```
+
+Then compare absolute TCP sequence numbers:
+
+```powershell
+py main.py --dual-pcap client.pcapng server.pcap `
+  --tunnel-endpoint SERVER_IP:443 `
+  --flow-output reports\dual-vantage.json
+```
+
+Interpretation:
+
+- client payload present only in the client capture: divergence on the forward
+  path between the two capture points;
+- server payload present only in the VPS capture: reverse-path divergence;
+- server-to-client RST present only at the client: compatible with an injected
+  or spoofed reset, but first exclude capture loss/offload;
+- RST present at the VPS and client: visible at the server vantage, so it is not
+  an event that appeared only near the client.
+
+The exact physical hop still requires additional vantage points or a controlled
+TTL-limited experiment. Traceroute alone cannot identify a silent packet drop.
+
+## Reverse traceroute
+
+A return path can only be measured from a cooperative remote host:
+
+```powershell
+py main.py --reverse-trace YOUR_PUBLIC_IP --reverse-agent user@YOUR_VPS
+```
+
+This describes the remote-agent-to-destination route. It does not make an
+arbitrary public service trace back to you, and asymmetric paths are normal.
+Never use a residential address as the destination. For an international path
+comparison, deploy a second controlled VPS in a datacenter and trace only
+between the two controlled hosts.
+
+## What each legacy probe really measures
+
+| Probe | Direct observation | Not proven by that observation |
+|---|---|---|
+| Crafted SNI | response/alert/EOF/timeout differs with ClientHello content | who made the decision |
+| HTTP Host | response differs with a visible Host value | on-path filtering versus virtual-host policy |
+| DNS | resolver answer sets differ | poisoning; CDNs and split DNS can differ normally |
+| TTL samples | selected outgoing TTLs connect or do not connect | exact hop, ICMP suppression, DPI location |
+| Plaintext on 443 | data, EOF, timeout, or a real socket reset after invalid protocol input | reset origin without PCAP |
+| Malformed TLS | a parser returns an alert/data/reset or nothing | parser location from timing alone |
+| TCP write segmentation | outcome changes with application write boundaries | guaranteed IP fragmentation |
+| TLS record split/mutation | outcome changes after changing the ClientHello | a confirmed usable bypass |
+| JA3/JA3S | fingerprint of this handcrafted hello and returned ServerHello | Chrome/Firefox identity or middlebox ownership |
+
+## ECH scope
+
+`--ech` reads the DNS HTTPS/SVCB record and reports whether an ECH configuration
+is advertised. It only claims a handshake if the local TLS runtime actually
+offers and completes ECH. ECH is standardized in RFC 9849 and bootstrapped with
+DNS service bindings by RFC 9848.
+
+## sing-box logging for a reproduction window
+
+Official sing-box configuration supports timestamped file logging:
 
 ```json
 {
-  "targets": [
-    {"ip": "1.1.1.1", "name": "Cloudflare DNS"},
-    {"ip": "8.8.8.8", "name": "Google DNS"},
-    {"ip": "9.9.9.9", "name": "Quad9 DNS"}
-  ],
-  "domains": {
-    "blocked": ["instagram.com", "facebook.com", "twitter.com", "youtube.com", "x.com"],
-    "clean": ["google.com", "github.com", "cloudflare.com", "yandex.ru", "rutube.ru"]
+  "log": {
+    "disabled": false,
+    "level": "debug",
+    "output": "box.log",
+    "timestamp": true
   }
 }
 ```
 
----
+Do not leave verbose logging enabled indefinitely. Logs and PCAPs can expose
+destinations, timings, local/public addresses, routing policy, and usage
+patterns.
 
-## Example Output
+## Known limits and next evidence needed
 
-```
-==================================================
-DPI PROBE REPORT
-Target     : 1.1.1.1
-Timestamp  : 2026-05-23T12:21:58Z
-DPI detected  : YES
-Confidence    : HIGH
-Score         : 9/10
-Findings :
-→ SNI filtering observed for: instagram.com, facebook.com, twitter.com, x.com
-→ TTL/ICMP behavior consistent with suppression at hops [1, 2, 3, 5, 8]
-→ RST timing consistent with closer responder - 0.46x baseline
-→ Malformed TLS responses faster than clean SNI baseline - timing consistent with middlebox TLS parser
-```
-The score is conservative by design. Each signal is weighted separately and reported with its own confidence level.
+- A public endpoint is not a controlled responder. The strongest future test is
+  a VPS service that logs received probe IDs and packets.
+- A client-only PCAP cannot distinguish a server-side discard from a packet
+  lost after leaving the client.
+- Dual PCAP locates divergence between endpoints, not the exact router.
+- NIC offload and capture loss must be considered before declaring injection.
+- VLESS/REALITY encrypts inner destinations. Correlating a failure requires
+  timestamped sing-box logs or API connection metadata.
+- Default domain labels become stale; treat `clean` and `blocked` as hypotheses,
+  not ground truth.
 
----
+## Primary references
 
-## Field Results: Restrictive Network Path
-
-These are real observations from one restrictive network path. Results are path-specific and should not be generalized across ISPs or countries.
-
-### PCAP Capture Analysis
-
-Captured with `--pcap` flag during probe runs. Requires Wireshark/tshark.
-
-| Metric | Tele2 4G no-vpn | VLESS Reality |
-|---|---|---|
-| Total packets | 716 | 806 |
-| Retransmissions | 129 | 0 |
-| RST packets | 24 | 0 |
-| TLS alerts | 36 | 52 |
-| Dominant TTL | 55 (9 hops) | 64 (local tunnel) |
-| Avg inter-packet timing | 192ms | 63ms |
-| Avg packet size | 101.7B | 65.5B |
-
-Under no-vpn: 129 retransmissions confirm silent drop behavior; blocked packets trigger TCP retransmission backoff. Under VLESS Reality: zero retransmissions, all packets reach destination through the tunnel.
-
-### SNI Filtering
-
-Tested against `1.1.1.1` (Cloudflare) and `8.8.8.8` (Google DNS), no VPN:
-
-| SNI | 1.1.1.1 | 8.8.8.8 | Observed |
-|---|---|---|---|
-| google.com | tls_alert | tls_alert | PASS |
-| github.com | tls_alert | tls_alert | PASS |
-| cloudflare.com | tls_alert | tls_alert | PASS |
-| yandex.ru | tls_alert | tls_alert | PASS |
-| rutube.ru | tls_alert | tls_alert | PASS |
-| instagram.com | silent_drop | silent_drop | BLOCKED |
-| facebook.com | silent_drop | silent_drop | BLOCKED |
-| twitter.com | silent_drop | silent_drop | BLOCKED |
-| x.com | silent_drop | silent_drop | BLOCKED |
-| youtube.com | tls_alert | silent_drop | PARTIAL |
-
-SNI filtering observed on blocked domains. Clean domains pass consistently. `youtube.com` behavior differs between destinations, suggesting SNI + destination IP correlation.
-
-### TTL Hop Analysis
-
-| TTL | 1.1.1.1 | 8.8.8.8 |
-|---|---|---|
-| 1–8 | timeout | timeout |
-| 13 | connected | timeout |
-| 21 | connected | connected |
-| 64 | connected | connected |
-
-No ICMP TTL Exceeded responses observed between hop 1 and hop 13. This is consistent with ICMP suppression on the network path, though it is not conclusive on its own.
-
-### RST Timing
-
-| Target | Baseline RTT | RST Timing | Ratio | Observation |
-|---|---|---|---|---|
-| 1.1.1.1 | ~21ms | ~9ms | 0.46x | consistent with closer responder |
-| 8.8.8.8 | ~22ms | ~24ms | 1.09x | no anomaly |
-
-### Malformed TLS ClientHello
-
-| Variant | Response | Alert Code | Median RTT |
-|---|---|---|---|
-| wrong_version | tls_alert | 0x28 | 13ms |
-| empty_ciphers | tls_alert | 0x32 | 9ms |
-| oversized_sni | tls_alert | 0x32 | 8ms |
-| truncated | tls_alert | 0x32 | 7ms |
-| duplicate_sni | tls_alert | 0x32 | 9ms |
-
-Responses arrived faster than the clean SNI baseline on this network path, consistent with an intermediate TLS parser.
-
-### VPN Comparison
-
-| Condition | SNI drops | RST ratio | DPI signal | Note |
-|---|---|---|---|---|
-| No VPN | 4/5 | 0.46x | yes | filtering and timing anomaly observed |
-| AdGuard VPN | 0/5 | ~0.45x | yes | SNI hidden, timing anomaly still present |
-| VLESS Reality | 0/5 | 26–394x | no | no observable signal |
-
-AdGuard masks SNI drops but the timing anomaly persists. In this test environment, VLESS Reality removed the observable DPI signals detected by the probe.
-
----
-
-## Methodology
-
-`dpi-probe` separates raw observations from interpretation.
-
-- `silent_drop` on blocked SNI with clean domains responding suggests SNI-based filtering.
-- RST/response timing significantly below baseline RTT may suggest a closer responder on the path.
-- Missing ICMP TTL Exceeded responses are treated as a weak signal alone, stronger in combination.
-- Malformed TLS responses are compared against clean SNI baseline timing before scoring.
-- Each signal is reported with its own confidence level. The overall score aggregates independently weighted signals.
-
----
-
-## Limitations
-
-- No automatic PCAP capture yet. Run alongside Wireshark or `tcpdump` for stronger evidence.
-- Response TTL is not captured yet. TTL-based attribution would significantly strengthen timing signals.
-- Crafted ClientHello packets are realistic but not identical to Chrome/Firefox fingerprints.
-- TTL timeouts alone do not prove DPI.
-- Timing-based attribution is probabilistic without packet-level validation.
-- Domain blocklists change over time and should be updated in `targets.json`.
-
----
-
-## Safety
-
-This tool generates traffic to domains that may be blocked or sensitive in some countries or networks.
-
-Use it only where you understand the legal, operational, and personal risk.
-
-Reports and packet captures may expose your IP address, ISP, tested domains, timestamps, and network behavior. Review them before sharing publicly.
-
-## Roadmap
-
-### Phase 1 - Core probes
-- [x] TCP 443 reachability test
-- [x] Plain HTTP behavior test
-- [x] SNI fingerprinting
-- [x] TTL hop analysis
-- [x] RST timing fingerprinting
-- [x] Malformed TLS ClientHello probes
-- [x] JSON report output
-
-### Phase 2 - Reliability
-- [x] Configurable sample count
-- [x] Median, p95, variance, timeout rate
-- [x] Config-based clean/blocked domain lists
-- [x] Per-signal confidence levels
-- [x] Separate observations from interpretations
-- [x] Multi-target probe in one run
-- [x] Stable JSON schema
-
-### Phase 3 - DPI Classification
-- [x] IP-based blocking classification
-- [x] HTTP Host header filtering detection
-- [x] SNI + destination IP correlation detection
-- [x] Compare mode - `--compare` two reports
-- [x] Profile tagging - `--profile`
-- [x] Reliability indicator based on sample count
-
-### Phase 4 - Fingerprinting
-- [x] Capture response TTL
-- [x] Compare response TTL vs baseline TTL
-- [x] Optional PCAP export
-- [x] Wireshark/tshark analysis helper
-
-### Phase 5 - Usability
-- [ ] `--quick`, `--full`, `--stealth` modes
-- [ ] Human-readable text report
-- [x] Stable JSON schema with versioning
-- [ ] PyPI package
-  [x] anonymize
-
----
-
-## Stack
-
-- Python 3.11+
-- Standard library only - no external dependencies
-- Standard-library TCP sockets, crafted TLS payloads
-
----
-
-## Author
-
-Built by [allanjoshuaf](https://github.com/allanjoshuaf)
+- [RFC 9849 — TLS Encrypted Client Hello](https://www.rfc-editor.org/rfc/rfc9849.html)
+- [RFC 9848 — Bootstrapping ECH with DNS Service Bindings](https://www.rfc-editor.org/info/rfc9848/)
+- [RFC 9505 — Survey of Worldwide Censorship Techniques](https://www.rfc-editor.org/info/rfc9505/)
+- [sing-box VLESS outbound](https://sing-box.sagernet.org/configuration/outbound/vless/)
+- [sing-box TLS/REALITY fields](https://sing-box.sagernet.org/configuration/shared/tls/)
+- [sing-box logging](https://sing-box.sagernet.org/configuration/log/)
+- [sing-box Clash API](https://sing-box.sagernet.org/configuration/experimental/clash-api/)
+- [XTLS REALITY implementation notes](https://github.com/XTLS/REALITY/blob/main/README.en.md)

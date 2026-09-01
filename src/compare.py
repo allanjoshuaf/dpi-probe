@@ -3,7 +3,7 @@ import sys
 
 def load_report(path: str) -> dict:
     try:
-        with open(path, "r") as f:
+        with open(path, "r", encoding="utf-8") as f:
             return json.load(f)
     except Exception as e:
         print(f"[!] Failed to load {path}: {e}")
@@ -77,8 +77,8 @@ def compare_signals(a: dict, b: dict) -> list:
     all_signals = set(a.keys()) | set(b.keys())
 
     for signal in sorted(all_signals):
-        a_conf = a.get(signal, {}).get("confidence", "missing")
-        b_conf = b.get(signal, {}).get("confidence", "missing")
+        a_conf = a.get(signal, {}).get("strength", a.get(signal, {}).get("confidence", "missing"))
+        b_conf = b.get(signal, {}).get("strength", b.get(signal, {}).get("confidence", "missing"))
 
         if a_conf != b_conf:
             changes.append({
@@ -95,7 +95,7 @@ def compare_rst(a: dict, b: dict) -> list:
     a_ratio = a.get("ratio")
     b_ratio = b.get("ratio")
 
-    if a_ratio and b_ratio:
+    if a_ratio is not None and b_ratio is not None:
         diff = abs(a_ratio - b_ratio)
         if diff > 0.3:
             changes.append({
@@ -157,9 +157,9 @@ def run(path_a: str, path_b: str):
     rst_changes = compare_rst(tests_a.get("rst", {}), tests_b.get("rst", {}))
     all_changes += rst_changes
 
-    # Score
-    score_a = summary_a.get("score", "?")
-    score_b = summary_b.get("score", "?")
+    # Evidence assessment (with legacy score fallback)
+    assessment_a = summary_a.get("assessment", summary_a.get("score", "?"))
+    assessment_b = summary_b.get("assessment", summary_b.get("score", "?"))
     conf_a = summary_a.get("confidence", "?")
     conf_b = summary_b.get("confidence", "?")
 
@@ -170,7 +170,7 @@ def run(path_a: str, path_b: str):
     print(f"  COMPARISON REPORT")
     print("=" * 50)
     print(f"  Profile    : {profile_a} → {profile_b}")
-    print(f"  Score      : {score_a} → {score_b}")
+    print(f"  Assessment : {assessment_a} → {assessment_b}")
     print(f"  Confidence : {conf_a} → {conf_b}")
 
     if not all_changes:

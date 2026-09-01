@@ -9,7 +9,7 @@ def summarize(samples: list[float]) -> dict:
 
     if not clean:
         return {
-            "samples": 0,
+            "samples": len(samples),
             "median_ms": None,
             "mean_ms": None,
             "p95_ms": None,

@@ -1,16 +1,6 @@
 import socket
-import ssl
-import time
 from cryptography.hazmat.primitives.asymmetric import x25519
 from cryptography.hazmat.primitives import serialization
-
-private_key = x25519.X25519PrivateKey.generate()
-public_key = private_key.public_key().public_bytes(
-    encoding=serialization.Encoding.Raw,
-    format=serialization.PublicFormat.Raw
-)
-
-print(len(public_key))  # 32
 
 def build_tls_client_hello(sni: str, padding_size: int = 0) -> bytes:
     """Craft a realistic TLS ClientHello mimicking a real browser"""
@@ -65,7 +55,14 @@ def build_tls_client_hello(sni: str, padding_size: int = 0) -> bytes:
         b'\x05\x01'     # rsa_pkcs1_sha384
     )
 
-    # Key share (x25519 public key placeholder)
+    # A TLS 1.3 key share must be fresh for each ClientHello.
+    private_key = x25519.X25519PrivateKey.generate()
+    public_key = private_key.public_key().public_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PublicFormat.Raw,
+    )
+
+    # Key share (X25519)
     key_share = (
         b'\x00\x33' +
         b'\x00\x26' +
@@ -167,13 +164,13 @@ def test_sni(target_ip: str, sni: str, port: int = 443, timeout: float = 4.0) ->
         rtt = round((_time.time() - start) * 1000, 2)
         result["rtt_ms"] = rtt
 
-        s.send(build_tls_client_hello(sni))
+        s.sendall(build_tls_client_hello(sni))
         response = s.recv(4096)
         s.close()
 
         if len(response) == 0:
             result["status"] = "empty"
-            result["response_type"] = "possible_block"
+            result["response_type"] = "connection_closed_no_data"
         elif response[0] == 0x15:
             result["status"] = "alert"
             result["response_type"] = "tls_alert"
@@ -186,7 +183,7 @@ def test_sni(target_ip: str, sni: str, port: int = 443, timeout: float = 4.0) ->
 
     except socket.timeout:
         result["status"] = "timeout"
-        result["response_type"] = "silent_drop"
+        result["response_type"] = "no_response_before_timeout"
     except ConnectionResetError:
         result["status"] = "rst"
         result["response_type"] = "tcp_reset"
@@ -235,7 +232,7 @@ def run(target_ip: str, samples: int = 1, config: dict = None):
             status_label = "PASS   "
         else:
             indicator = "✗"
-            status_label = "BLOCKED"
+            status_label = "NO RESP"
 
         if samples == 1:
             print(f"    [{indicator}] {status_label} {sni:<25} → {dominant} ({rtts[0]}ms)")
@@ -248,7 +245,8 @@ def run(target_ip: str, samples: int = 1, config: dict = None):
             "dominant_response": dominant,
             "status_breakdown": status_summary["breakdown"],
             "rtt_stats": stats,
-            "observation": "consistent_with_sni_filtering" if dominant == "silent_drop" else "no_filtering_observed",
+            "observation": "no_response_observed" if dominant in {"no_response_before_timeout", "connection_closed_no_data"} else "response_observed",
+            "attribution": "unresolved",
             "attempts": attempts,
         })
 

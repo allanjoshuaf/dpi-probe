@@ -126,8 +126,8 @@ def probe_variant(target_ip: str, variant: str, port: int = 443, timeout: float 
 
             if len(response) == 0:
                 result["status"] = "empty"
-                result["response_type"] = "silent_drop"
-                result["note"] = "No response - possible DPI drop"
+                result["response_type"] = "connection_closed_no_data"
+                result["note"] = "Peer closed the TCP stream without application data"
             elif response[0] == 0x15:
                 alert_desc = response[6] if len(response) > 6 else None
                 result["status"] = "alert"
@@ -137,7 +137,7 @@ def probe_variant(target_ip: str, variant: str, port: int = 443, timeout: float 
             elif response[0] == 0x16:
                 result["status"] = "ok"
                 result["response_type"] = "server_hello"
-                result["note"] = "Server accepted malformed hello - suspicious"
+                result["note"] = "A TLS handshake record was returned; parser identity is unknown"
             else:
                 result["status"] = "unknown"
                 result["raw_byte"] = hex(response[0])
@@ -145,8 +145,8 @@ def probe_variant(target_ip: str, variant: str, port: int = 443, timeout: float 
 
         except socket.timeout:
             result["status"] = "timeout"
-            result["response_type"] = "silent_drop"
-            result["note"] = "Timeout - silent drop"
+            result["response_type"] = "no_response_before_timeout"
+            result["note"] = "No response before the configured timeout"
 
         s.close()
 
@@ -209,7 +209,8 @@ def run(target_ip: str, samples: int = 1):
             "dominant_alert_code": dominant_byte,
             "status_breakdown": status_summary["breakdown"],
             "rtt_stats": stats,
-            "observation": "consistent_with_middlebox_tls_parser" if stats["median_ms"] and stats["median_ms"] < 15 else "inconclusive",
+            "observation": "response_profile_only",
+            "attribution": "destination_or_on_path_parser",
         })
 
     return results

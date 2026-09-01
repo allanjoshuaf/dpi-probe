@@ -1,6 +1,6 @@
 import socket
 import time
-from src.tests.sni_test import build_tls_client_hello
+from src.probes.sni_test import build_tls_client_hello
 
 def split_clienthello_record(clienthello: bytes, split_at: int) -> tuple:
     if len(clienthello) < 6:
@@ -19,7 +19,7 @@ def split_clienthello_record(clienthello: bytes, split_at: int) -> tuple:
 
 def interpret(data: bytes) -> str:
     if not data:
-        return "silent_drop"
+        return "connection_closed_no_data"
     if data[0] == 0x16:
         return "server_hello"
     if data[0] == 0x15:
@@ -40,7 +40,7 @@ def test_normal(target_ip: str, sni: str, timeout: float = 4.0) -> str:
         try:
             return interpret(s.recv(4096))
         except socket.timeout:
-            return "silent_drop"
+            return "no_response_before_timeout"
         finally:
             s.close()
     except Exception as e:
@@ -49,28 +49,6 @@ def test_normal(target_ip: str, sni: str, timeout: float = 4.0) -> str:
 def test_record_split(target_ip: str, sni: str, split_at: int, timeout: float = 4.0) -> str:
     try:
         hello = build_tls_client_hello(sni)
-        needle = b"\x00\x17\x00\x18"
-        group_pos = hello.find(needle)
-
-        print(
-            f"SNI={sni} "
-            f"00170018_pos={group_pos}"
-        )
-        sni_pos = hello.find(sni.encode())
-        print(
-            f"SNI={sni} "
-            f"sni_start={sni_pos} "
-            f"sni_end={sni_pos + len(sni) - 1} "
-            f"split={split_at}"
-        )
-        if split_at == 128:
-            print("\n=== BYTES 120-136 ===")
-
-            for i in range(120, 137):
-                print(f"{i}: {hello[i]:02x}")
-
-            print("\n=== HEX 110-150 ===")
-            print(hello[110:150].hex())
         r1, r2 = split_clienthello_record(hello, split_at)
         s = connect(target_ip, timeout)
         s.sendall(r1)
@@ -79,7 +57,7 @@ def test_record_split(target_ip: str, sni: str, split_at: int, timeout: float = 
         try:
             return interpret(s.recv(4096))
         except socket.timeout:
-            return "silent_drop"
+            return "no_response_before_timeout"
         finally:
             s.close()
     except Exception as e:
@@ -97,7 +75,7 @@ def test_padding(target_ip: str, sni: str, padding_sizes: list, timeout: float =
             try:
                 results[size] = interpret(s.recv(4096))
             except socket.timeout:
-                results[size] = "silent_drop"
+                results[size] = "no_response_before_timeout"
             finally:
                 s.close()
         except Exception as e:
@@ -128,27 +106,27 @@ def test_case_randomization(target_ip: str, sni: str, attempts: int = 3, timeout
             try:
                 results.append(interpret(s.recv(4096)))
             except socket.timeout:
-                results.append("silent_drop")
+                results.append("no_response_before_timeout")
             finally:
                 s.close()
         except Exception as e:
             results.append(f"error: {e}")
         time.sleep(0.1)
 
-    bypasses = [r for r in results if r == "server_hello"]
+    responses = [r for r in results if r in {"server_hello", "tls_alert"}]
 
-    if len(bypasses) == attempts:
-        verdict = "confirmed_bypass"
-    elif len(bypasses) > 0:
-        verdict = "possible_bypass"
+    if len(responses) == attempts:
+        verdict = "response_for_all_case_variants"
+    elif len(responses) > 0:
+        verdict = "response_for_some_case_variants"
     else:
-        verdict = "bypass_ineffective"
+        verdict = "no_response_for_case_variants"
 
     return {
         "sni": sni,
         "variants_tested": variants,
         "results": results,
-        "bypass_count": len(bypasses),
+        "response_count": len(responses),
         "verdict": verdict
     }
 
@@ -158,7 +136,7 @@ def run(config: dict, target_ip: str = "1.1.1.1") -> list:
 
     split_positions = [128]
 
-    print("\n[*] DPI Bypass — TLS Record Fragmentation")
+    print("\n[*] TLS Record-Split Differential Test")
     print(f"    Target        : {target_ip}:443")
     print(f"    Split points  : {split_positions}\n")
 
@@ -179,12 +157,6 @@ def run(config: dict, target_ip: str = "1.1.1.1") -> list:
 
         split_positions = [pos + 2]
 
-        print(
-            f"SNI={sni} "
-            f"00170018_pos={pos} "
-            f"dynamic_split={pos + 2}"
-        )
-
         for split_at in split_positions:
             time.sleep(0.1)
             splits[split_at] = test_record_split(
@@ -193,70 +165,70 @@ def run(config: dict, target_ip: str = "1.1.1.1") -> list:
                 split_at
             )
 
-        confirmed_bypass = [
+        server_hello_changes = [
             pos for pos, r in splits.items()
-            if normal == "silent_drop" and r == "server_hello"
+            if normal in {"silent_drop", "no_response_before_timeout", "connection_closed_no_data"} and r == "server_hello"
         ]
 
-        possible_bypass = [
+        tls_alert_changes = [
             pos for pos, r in splits.items()
-            if normal == "silent_drop" and r == "tls_alert"
+            if normal in {"silent_drop", "no_response_before_timeout", "connection_closed_no_data"} and r == "tls_alert"
         ]
 
-        if confirmed_bypass:
-            verdict = "confirmed_bypass"
-        elif possible_bypass:
-            verdict = "possible_bypass"
-        elif normal == "silent_drop":
-            verdict = "bypass_ineffective"
+        if server_hello_changes:
+            verdict = "server_hello_only_after_record_split"
+        elif tls_alert_changes:
+            verdict = "tls_alert_only_after_record_split"
+        elif normal in {"silent_drop", "no_response_before_timeout", "connection_closed_no_data"}:
+            verdict = "no_response_with_or_without_record_split"
         else:
-            verdict = "no_blocking"
+            verdict = "baseline_already_responded"
 
         indicator = (
-            "!" if verdict == "confirmed_bypass"
-            else "?" if verdict == "possible_bypass"
-            else "+" if verdict == "no_blocking"
+            "!" if verdict == "server_hello_only_after_record_split"
+            else "?" if verdict == "tls_alert_only_after_record_split"
+            else "+" if verdict == "baseline_already_responded"
             else "x"
         )
 
         split_summary = " | ".join(f"@{p}={v}" for p, v in splits.items())
         print(f"    [{indicator}] {sni:<25} normal={normal:<12} {split_summary}")
-        if confirmed_bypass:
-            print(f"         CONFIRMED BYPASS: {confirmed_bypass}")
+        if server_hello_changes:
+            print(f"         OUTCOME CHANGE (ServerHello): {server_hello_changes}")
 
-        if possible_bypass:
-            print(f"         POSSIBLE BYPASS: {possible_bypass}")
+        if tls_alert_changes:
+            print(f"         OUTCOME CHANGE (TLS alert): {tls_alert_changes}")
 
         results.append({
             "sni": sni,
             "category": "clean" if sni in clean else "blocked",
             "normal": normal,
             "splits": splits,
-            "confirmed_bypass": confirmed_bypass,
-            "possible_bypass": possible_bypass,
+            "server_hello_after_record_split": server_hello_changes,
+            "tls_alert_after_record_split": tls_alert_changes,
             "verdict": verdict,
         })
 
-    print("\n[*] DPI Bypass — Padding Extension\n")
+    print("\n[*] TLS Padding Outcome Differential\n")
     padding_sizes = [64, 128, 256, 512]
 
     for sni in clean + blocked:
         normal = next((r["normal"] for r in results if r["sni"] == sni), None)
         pad_results = test_padding(target_ip, sni, padding_sizes)
 
-        confirmed = [s for s, r in pad_results.items()
-                     if normal == "silent_drop" and r == "server_hello"]
-        possible = [s for s, r in pad_results.items()
-                    if normal == "silent_drop" and r == "tls_alert"]
+        server_hello_changes = [s for s, r in pad_results.items()
+                     if normal in {"silent_drop", "no_response_before_timeout", "connection_closed_no_data"} and r == "server_hello"]
+        tls_alert_changes = [s for s, r in pad_results.items()
+                    if normal in {"silent_drop", "no_response_before_timeout", "connection_closed_no_data"} and r == "tls_alert"]
 
-        verdict = "confirmed_bypass" if confirmed else \
-                  "possible_bypass" if possible else \
-                  "bypass_ineffective" if normal == "silent_drop" else \
-                  "no_blocking"
+        verdict = "server_hello_only_with_padding" if server_hello_changes else \
+                  "tls_alert_only_with_padding" if tls_alert_changes else \
+                  "no_response_with_or_without_padding" if normal in {"silent_drop", "no_response_before_timeout", "connection_closed_no_data"} else \
+                  "baseline_already_responded"
 
-        indicator = "!" if verdict == "confirmed_bypass" else \
-                    "?" if verdict == "possible_bypass" else \
-                    "+" if verdict == "no_blocking" else "x"
+        indicator = "!" if verdict == "server_hello_only_with_padding" else \
+                    "?" if verdict == "tls_alert_only_with_padding" else \
+                    "+" if verdict == "baseline_already_responded" else "x"
 
         pad_summary = " | ".join(f"pad{s}={r}" for s, r in pad_results.items())
         print(f"    [{indicator}] {sni:<25} {pad_summary}")
@@ -264,18 +236,18 @@ def run(config: dict, target_ip: str = "1.1.1.1") -> list:
         for r in results:
             if r["sni"] == sni:
                 r["padding"] = pad_results
-                r["padding_bypass"] = bool(confirmed or possible)
-                r["padding_confirmed"] = confirmed
-                r["padding_possible"] = possible
+                r["padding_outcome_changed"] = bool(server_hello_changes or tls_alert_changes)
+                r["padding_server_hello_changes"] = server_hello_changes
+                r["padding_tls_alert_changes"] = tls_alert_changes
 
-    print("\n[*] DPI Bypass — SNI Case Randomization\n")
+    print("\n[*] SNI Case Outcome Differential\n")
 
     for sni in blocked:
         r = test_case_randomization(target_ip, sni)
 
-        if r["verdict"] == "confirmed_bypass":
+        if r["verdict"] == "response_for_all_case_variants":
             indicator = "!"
-        elif r["verdict"] == "possible_bypass":
+        elif r["verdict"] == "response_for_some_case_variants":
             indicator = "?"
         else:
             indicator = "x"

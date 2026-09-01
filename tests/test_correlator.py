@@ -45,7 +45,7 @@ class CorrelatorTest(unittest.TestCase):
         self.assertEqual(result["instagram.com"]["rst_packets"], 0)
         self.assertEqual(result["instagram.com"]["retransmissions"], 1)
         self.assertEqual(result["instagram.com"]["tcp_streams"], ["1"])
-        self.assertEqual(result["instagram.com"]["evidence"], "clienthello_seen_retransmissions_no_server_response")
+        self.assertEqual(result["instagram.com"]["evidence"], "clienthello_seen_retransmissions_no_response")
         self.assertEqual(result["github.com"]["client_hellos"], 1)
         self.assertEqual(result["github.com"]["tls_alerts"], 1)
         self.assertEqual(result["github.com"]["evidence"], "clienthello_seen_tls_alert_received")

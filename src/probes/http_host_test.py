@@ -30,8 +30,8 @@ def test_http_host(target_ip: str, host: str, port: int = 80, timeout: float = 4
             s.close()
 
             if len(response) == 0:
-                result["status"] = "silent_drop"
-                result["note"] = "Empty response"
+                result["status"] = "connection_closed_no_data"
+                result["note"] = "Peer closed without application data"
             elif response.startswith("HTTP/"):
                 first_line = response.split("\r\n")[0]
                 code = first_line.split(" ")[1] if len(first_line.split(" ")) > 1 else "unknown"
@@ -43,8 +43,8 @@ def test_http_host(target_ip: str, host: str, port: int = 80, timeout: float = 4
                 result["note"] = response[:80]
 
         except socket.timeout:
-            result["status"] = "silent_drop"
-            result["note"] = "Timeout after connect"
+            result["status"] = "no_response_before_timeout"
+            result["note"] = "No response before timeout after connect"
 
     except socket.timeout:
         result["status"] = "timeout"
@@ -59,14 +59,14 @@ def test_http_host(target_ip: str, host: str, port: int = 80, timeout: float = 4
     return result
 
 def classify(host: str, result: dict, clean_codes: list) -> str:
-    """Classify filtering based on response"""
+    """Describe the observed outcome without attributing it to a filter."""
     status = result.get("status")
     code = result.get("response_code")
 
-    if status == "silent_drop":
-        return "host_filtered"
+    if status in {"no_response_before_timeout", "connection_closed_no_data"}:
+        return "host_dependent_no_response"
     elif status == "rst":
-        return "host_rst"
+        return "host_dependent_reset"
     elif status == "response" and code in clean_codes:
         return "no_filtering"
     elif status == "response":
@@ -76,13 +76,13 @@ def classify(host: str, result: dict, clean_codes: list) -> str:
     else:
         return "inconclusive"
 
-def run(config: dict) -> list:
+def run(config: dict, target_ip: str = None) -> list:
     targets = [t["ip"] for t in config.get("targets", [])]
     blocked = config["domains"]["blocked"]
     clean = config["domains"]["clean"]
 
     # Use first target IP for HTTP test
-    target_ip = targets[0] if targets else "1.1.1.1"
+    target_ip = target_ip or (targets[0] if targets else "1.1.1.1")
 
     print("\n[*] HTTP Host Header Filtering Test")
     print(f"    Target IP : {target_ip}:80")
@@ -106,7 +106,7 @@ def run(config: dict) -> list:
         classification = classify(host, r, clean_codes)
 
         indicator = "✓" if classification == "no_filtering" else \
-                    "✗" if classification in ["host_filtered", "host_rst"] else "⚠"
+                    "⚠" if classification in ["host_dependent_no_response", "host_dependent_reset"] else "?"
 
         print(f"    [{indicator}] {host:<25} → {classification:<20} {r['note'] or ''}")
 
@@ -118,6 +118,8 @@ def run(config: dict) -> list:
             "response_code": r["response_code"],
             "rtt_ms": r["rtt_ms"],
             "note": r["note"],
+            "attribution": "on_path_or_destination",
+            "limitation": "The destination is not a controlled virtual host for every Host value.",
         })
 
     return results
