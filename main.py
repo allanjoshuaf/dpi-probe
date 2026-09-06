@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""
-dpi-probe - DPI detection and fingerprinting tool
-"""
+"""dpi-probe: evidence collection for network interference and tunnel faults."""
 
 import sys
 import argparse
-from src.probe import Probe
-from src import autodetect
+import ipaddress
+import json
+import os
 from src import config as cfg
+from src.version import VERSION
 
 def configure_console_encoding():
     """Avoid Windows cp1252 crashes when printing Unicode status markers."""
@@ -19,23 +19,23 @@ def main():
     configure_console_encoding()
 
     parser = argparse.ArgumentParser(
-        description="dpi-probe - detect and fingerprint DPI middleboxes"
+        description="dpi-probe - collect evidence about network interference and tunnel failures"
     )
     parser.add_argument(
         "--version",
         action="version",
-        version="dpi-probe 0.1.0-alpha"
+        version=f"dpi-probe {VERSION}"
     )
     parser.add_argument(
         "target",
         nargs="?",
-        help="Target IP to probe (omit for auto-detection mode)"
+        help="Target IP to probe (no arguments opens the interactive assistant)"
     )
     parser.add_argument(
         "--samples",
         type=int,
         default=1,
-        help="Number of times to repeat each probe (default: 1)"
+        help="Number of repetitions for sampling-aware probes (default: 1)"
     )
     parser.add_argument(
         "--multi",
@@ -63,7 +63,7 @@ def main():
         "--pcap-interface",
         type=str,
         default=None,
-        help="Network interface for pcap capture (default: auto)"
+        help="Verified tshark interface used for packet capture"
     )
     parser.add_argument(
         "--anonymize",
@@ -76,27 +76,228 @@ def main():
         "--isp",
         type=str,
         default=None,
-        help="ISP name to include in anonymized report e.g. Tele2, Beeline"
+        help="Optional ISP label to include in an anonymized report"
     )
     parser.add_argument(
         "--country",
         type=str,
         default=None,
-        help="Country code to include in anonymized report e.g. RU, IR, CN"
+        help="Optional two-letter country code to include in an anonymized report"
     )
+    parser.add_argument(
+        "--ech",
+        metavar="HOSTNAME",
+        help="Inspect HTTPS DNS records and local ECH handshake support for one hostname"
+    )
+    parser.add_argument('--ech-active', action='store_true', help='require an actual ECH HTTPS request using an ECH-capable curl and Cloudflare DoH (with --ech)')
+    parser.add_argument(
+        "--reverse-trace",
+        metavar="PUBLIC_IP",
+        help="Run a traceroute from a controlled remote SSH agent back to this public IP"
+    )
+    parser.add_argument(
+        "--reverse-agent",
+        metavar="USER_AT_HOST",
+        help="SSH destination for --reverse-trace (for example probe@198.51.100.10)"
+    )
+    parser.add_argument(
+        "--reverse-agent-os",
+        choices=("linux", "windows"),
+        default="linux",
+        help="Operating system of --reverse-agent (default: linux)"
+    )
+    parser.add_argument(
+        "--reverse-max-hops",
+        type=int,
+        default=30,
+        help="Maximum reverse-traceroute hops, 1-64 (default: 30)"
+    )
+    parser.add_argument(
+        "--reverse-timeout-ms",
+        type=int,
+        default=2000,
+        help="Per-hop reverse-traceroute timeout, 100-10000 ms (default: 2000)"
+    )
+    parser.add_argument(
+        "--diagnose-tunnel",
+        action="store_true",
+        help="Diagnose a sing-box VLESS/REALITY endpoint from config, log and/or PCAP evidence"
+    )
+    parser.add_argument("--tunnel-endpoint", metavar="HOST:PORT", help="REALITY server endpoint")
+    parser.add_argument("--sing-box-config", metavar="FILE", help="sing-box JSON config (secrets are not copied to reports)")
+    parser.add_argument("--sing-box-log", metavar="FILE", help="timestamped sing-box log covering the failure")
+    parser.add_argument("--tunnel-pcap", metavar="FILE", help="client-side PCAP of the REALITY endpoint")
+    parser.add_argument("--server-pcap", metavar="FILE", help="server capture of the same attempt, integrated into the diagnosis")
+    parser.add_argument("--outbound-tag", metavar="TAG", help="select one VLESS outbound from a multi-outbound configuration")
+    parser.add_argument("--sing-box-api", metavar="URL", help="local Clash API, usually http://127.0.0.1:9090")
+    parser.add_argument(
+        "--sing-box-secret-env",
+        metavar="ENV_NAME",
+        help="environment variable containing the Clash API secret (avoids command-history leakage)"
+    )
+    parser.add_argument("--active-tunnel-checks", action="store_true", help="run TCP and traceroute checks to the tunnel endpoint")
+    parser.add_argument(
+        "--underlay-interface-index",
+        type=int,
+        help="force active endpoint TCP checks onto this physical Windows interface index",
+    )
+    parser.add_argument("--diagnosis-output", metavar="FILE", help="path for the tunnel diagnosis JSON")
+    parser.add_argument(
+        "--dual-pcap",
+        nargs=2,
+        metavar=("CLIENT_PCAP", "SERVER_PCAP"),
+        help="compare client and server captures using absolute TCP sequence numbers"
+    )
+    parser.add_argument("--flow-output", metavar="FILE", help="output JSON path for --dual-pcap")
 
+    parser.add_argument('--interactive', action='store_true', help='open the guided terminal assistant')
+    parser.add_argument('--auto', action='store_true', help='run the legacy general detection explicitly')
+    parser.add_argument('--doctor', action='store_true', help='check local dependencies without network probes')
     args = parser.parse_args()
-    config = cfg.load()
+    from src import preflight
+    if args.doctor:
+        if len(sys.argv) != 2:
+            parser.error('--doctor must be used alone')
+        sys.exit(0 if preflight.doctor() else 2)
+    dependency_issues = preflight.python_issues()
+    if dependency_issues:
+        parser.error('; '.join(dependency_issues) + '. Run dpi-probe.cmd / sh dpi-probe.sh for guided installation.')
+    from src.probe import Probe
+    from src import autodetect
+    if args.interactive or len(sys.argv) == 1:
+        if args.interactive and len(sys.argv) != 2:
+            parser.error('--interactive must be used alone; use explicit flags for scripted runs')
+        if not sys.stdin.isatty():
+            parser.error('interactive mode needs a terminal; use --help or explicit flags such as --diagnose-tunnel or --auto')
+        from src import cli_wizard
+        try:
+            cli_wizard.run()
+        except (KeyboardInterrupt, EOFError):
+            print('\nOpération annulée.')
+            sys.exit(130)
+        except (OSError, ValueError, RuntimeError) as exc:
+            parser.error(str(exc))
+        return
+
+    if args.samples < 1:
+        parser.error("--samples must be at least 1")
+    if args.ech_active and not args.ech:
+        parser.error('--ech-active requires --ech HOSTNAME')
+    tunnel_options = (args.sing_box_config, args.sing_box_log, args.tunnel_pcap, args.server_pcap,
+                      args.outbound_tag, args.sing_box_api, args.sing_box_secret_env,
+                      args.active_tunnel_checks, args.underlay_interface_index is not None,
+                      args.diagnosis_output)
+    if any(tunnel_options) and not args.diagnose_tunnel:
+        parser.error("tunnel diagnosis options require --diagnose-tunnel")
+    if args.tunnel_endpoint and not (args.diagnose_tunnel or args.dual_pcap):
+        parser.error("--tunnel-endpoint requires --diagnose-tunnel or --dual-pcap")
+    if args.flow_output and not args.dual_pcap:
+        parser.error("--flow-output requires --dual-pcap")
+    exclusive_modes = [
+        bool(args.multi), bool(args.compare), bool(args.anonymize), bool(args.ech),
+        bool(args.reverse_trace), bool(args.diagnose_tunnel), bool(args.dual_pcap), bool(args.auto),
+    ]
+    if sum(exclusive_modes) > 1:
+        parser.error("choose only one operation mode: --multi, --compare, --anonymize, --ech, --reverse-trace, --diagnose-tunnel, or --dual-pcap")
+    if args.target and any(exclusive_modes):
+        parser.error("the positional target cannot be combined with another operation mode")
+    if args.pcap and not args.pcap_interface:
+        parser.error("--pcap requires --pcap-interface N; list interfaces with: py -c \"from src import pcap; [print(i) for i in pcap.list_interfaces()]\"")
+
+    if args.dual_pcap:
+        if not args.tunnel_endpoint:
+            parser.error("--dual-pcap requires --tunnel-endpoint HOST:PORT")
+        from src import flow_analysis
+        try:
+            analysis = flow_analysis.compare_vantages(
+                args.dual_pcap[0], args.dual_pcap[1], args.tunnel_endpoint
+            )
+        except (ValueError, OSError, RuntimeError) as exc:
+            parser.error(str(exc))
+        output = args.flow_output or "reports/dual_pcap_analysis.json"
+        flow_analysis.save_analysis(analysis, output)
+        print(f"[*] Dual-vantage assessment : {analysis['assessment']}")
+        print(f"    Forward missing payload : {analysis['forward_payload_packets_missing_at_server']}")
+        print(f"    Reverse missing payload : {analysis['reverse_payload_packets_missing_at_client']}")
+        print(f"    Client-only server RST  : {analysis['server_to_client_resets_seen_only_at_client']}")
+        print(f"    Report                  : {output}")
+        sys.exit(0)
+
+    if args.diagnose_tunnel:
+        from src import tunnel_diagnose
+        secret = None
+        if args.sing_box_secret_env:
+            secret = os.environ.get(args.sing_box_secret_env)
+            if secret is None:
+                parser.error(f"environment variable {args.sing_box_secret_env!r} is not set")
+        try:
+            tunnel_diagnose.run(
+                endpoint=args.tunnel_endpoint,
+                config_path=args.sing_box_config,
+                log_path=args.sing_box_log,
+                pcap_path=args.tunnel_pcap,
+                clash_api=args.sing_box_api,
+                clash_secret=secret,
+                active_checks=args.active_tunnel_checks,
+                underlay_interface_index=args.underlay_interface_index,
+                output_path=args.diagnosis_output,
+                server_pcap_path=args.server_pcap,
+                outbound_tag=args.outbound_tag,
+                samples=args.samples,
+            )
+        except (ValueError, OSError, RuntimeError, json.JSONDecodeError) as exc:
+            parser.error(str(exc))
+        sys.exit(0)
+
+    if args.ech:
+        from src.probes import ech_test
+        try:
+            result = ech_test.run(args.ech, active=args.ech_active)
+            from src import flow_analysis
+            import datetime
+            output = 'reports/ech_' + datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%d_%H%M%S_%f') + '.json'
+            flow_analysis.save_analysis(result, output)
+            print(f'Report : {output}')
+        except (ValueError, OSError) as exc:
+            parser.error(str(exc))
+        sys.exit(0)
+
+    if args.reverse_trace:
+        if not args.reverse_agent:
+            parser.error("--reverse-trace requires --reverse-agent USER_AT_HOST")
+        from src import reverse_traceroute
+        try:
+            reverse_traceroute.run(
+                args.reverse_agent,
+                args.reverse_trace,
+                agent_os=args.reverse_agent_os,
+                max_hops=args.reverse_max_hops,
+                timeout_ms=args.reverse_timeout_ms,
+            )
+        except ValueError as exc:
+            parser.error(str(exc))
+        sys.exit(0)
 
     if args.anonymize:
         from src import anonymize
-        anonymize.run(args.anonymize, isp=args.isp, country=args.country)
+        try:
+            anonymize.run(args.anonymize, isp=args.isp, country=args.country)
+        except ValueError as exc:
+            parser.error(str(exc))
         sys.exit(0)
 
     if args.compare:
         from src import compare
-        compare.run(args.compare[0], args.compare[1])
+        try:
+            compare.run(args.compare[0], args.compare[1])
+        except ValueError as exc:
+            parser.error(str(exc))
         sys.exit(0)
+
+    try:
+        config = cfg.load()
+    except ValueError as exc:
+        parser.error(str(exc))
 
     if args.multi:
         targets = config.get("targets", [])
@@ -112,10 +313,18 @@ def main():
             probe.run()
         sys.exit(0)
 
-    if not args.target:
-        print("[*] No target specified - running auto-detection mode")
-        autodetect.run()
+    if args.auto:
+        autodetect.run(config)
         sys.exit(0)
+    if not args.target:
+        parser.error('specify a target or operation mode; use --interactive for the assistant')
+
+    try:
+        target_address = ipaddress.ip_address(args.target)
+        if target_address.version != 4:
+            parser.error("only IPv4 targets are currently supported")
+    except ValueError:
+        parser.error("target must be a valid IPv4 address")
 
     print(f"[*] Starting DPI probe against {args.target}")
     if args.samples > 1:

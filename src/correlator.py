@@ -53,8 +53,8 @@ def correlate(sni_results: list, pcap_analysis: dict) -> dict:
                 "client_hellos": 0,
                 "tls_alerts": 0,
                 "rst_packets": 0,
-                "server_rst_packets": 0,
-                "client_rst_packets": 0,
+                "target_ip_source_rst_packets": 0,
+                "other_source_rst_packets": 0,
                 "retransmissions": 0,
                 "tcp_streams": [],
                 "evidence": None,
@@ -76,11 +76,11 @@ def correlate(sni_results: list, pcap_analysis: dict) -> dict:
         alerts = events_for_streams(tls_alerts, streams)
         rsts = events_for_streams(rst_details, streams)
         retrans = events_for_streams(retransmissions, streams)
-        server_rsts = [
+        target_source_rsts = [
             r for r in rsts
             if target_ip and r.get("src") == target_ip
         ]
-        client_rsts = [
+        other_source_rsts = [
             r for r in rsts
             if not target_ip or r.get("src") != target_ip
         ]
@@ -88,8 +88,8 @@ def correlate(sni_results: list, pcap_analysis: dict) -> dict:
         data["client_hellos"] = len(hellos)
         data["tls_alerts"] = len(alerts)
         data["rst_packets"] = len(rsts)
-        data["server_rst_packets"] = len(server_rsts)
-        data["client_rst_packets"] = len(client_rsts)
+        data["target_ip_source_rst_packets"] = len(target_source_rsts)
+        data["other_source_rst_packets"] = len(other_source_rsts)
         data["retransmissions"] = len(retrans)
         data["tcp_streams"] = sorted(streams)
 
@@ -97,13 +97,13 @@ def correlate(sni_results: list, pcap_analysis: dict) -> dict:
         dominant = max(set(outcomes), key=outcomes.count)
         data["dominant_outcome"] = dominant
 
-        if dominant == "silent_drop" and data["client_hellos"] > 0:
-            if data["tls_alerts"] == 0 and data["server_rst_packets"] == 0 and data["retransmissions"] > 0:
-                data["evidence"] = "clienthello_seen_retransmissions_no_server_response"
-            elif data["tls_alerts"] == 0 and data["server_rst_packets"] == 0:
+        if dominant in {"silent_drop", "no_response_before_timeout", "connection_closed_no_data"} and data["client_hellos"] > 0:
+            if data["tls_alerts"] == 0 and data["target_ip_source_rst_packets"] == 0 and data["retransmissions"] > 0:
+                data["evidence"] = "clienthello_seen_retransmissions_no_response"
+            elif data["tls_alerts"] == 0 and data["target_ip_source_rst_packets"] == 0:
                 data["evidence"] = "clienthello_seen_no_response"
-            elif data["server_rst_packets"] > 0:
-                data["evidence"] = "clienthello_seen_server_rst"
+            elif data["target_ip_source_rst_packets"] > 0:
+                data["evidence"] = "clienthello_seen_rst_with_target_source_ip"
             else:
                 data["evidence"] = "clienthello_seen_mixed_stream_events"
         elif dominant == "tls_alert" and data["tls_alerts"] > 0:
@@ -125,8 +125,8 @@ def print_summary(by_domain: dict):
         print(f"      client_hellos  : {data['client_hellos']}")
         print(f"      tls_alerts     : {data['tls_alerts']}")
         print(f"      rst_packets    : {data['rst_packets']}")
-        print(f"      server_rsts    : {data['server_rst_packets']}")
-        print(f"      client_rsts    : {data['client_rst_packets']}")
+        print(f"      target-src RST : {data['target_ip_source_rst_packets']}")
+        print(f"      other-src RST  : {data['other_source_rst_packets']}")
         print(f"      retransmissions: {data['retransmissions']}")
         print(f"      tcp_streams    : {data['tcp_streams']}")
         print(f"      evidence       : {data['evidence']}")
