@@ -220,3 +220,9 @@ __marimo__/
 context.md
 report_*.json
 reports/
+*.pcap
+*.pcapng
+
+# Local field-session notes may contain endpoint IPs, public underlay IPs,
+# cover names and usage metadata. Keep sanitized methodology in tracked docs.
+*_SESSION_*.md

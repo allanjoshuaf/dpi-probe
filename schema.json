@@ -1,55 +1,98 @@
 {
-  "schema_version": "1.0",
-  "description": "dpi-probe report schema",
-  "fields": {
-    "schema_version": "string - report format version",
-    "meta": {
-      "target": "string - probed IP address",
-      "timestamp": "string - ISO 8601 UTC timestamp",
-      "tool": "string - always dpi-probe",
-      "version": "string - tool version"
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:dpi-probe:schema:2.0",
+  "title": "dpi-probe output",
+  "description": "Validation contract for probe reports, tunnel diagnoses, and dual-PCAP analyses.",
+  "oneOf": [
+    {"$ref": "#/$defs/probeReport"},
+    {"$ref": "#/$defs/tunnelDiagnosis"},
+    {"$ref": "#/$defs/dualPcapAnalysis"}
+  ],
+  "$defs": {
+    "signal": {
+      "type": "object",
+      "required": ["observation", "inference", "strength", "attribution", "limitations"],
+      "properties": {
+        "observation": {"type": "string"},
+        "inference": {"type": "string"},
+        "strength": {"enum": ["inconclusive", "context", "moderate", "strong", "direct_observation"]},
+        "attribution": {"type": "string"},
+        "limitations": {"type": "array", "items": {"type": "string"}},
+        "consistency": {"type": "number", "minimum": 0, "maximum": 1}
+      },
+      "additionalProperties": true
     },
-    "summary": {
-      "dpi_detected": "boolean - true if total signal score >= 3",
-      "confidence": "string - none | low | medium | high",
-      "score": "string - weighted signal score e.g. 7/9",
-      "signals": {
-        "sni_filtering": {
-          "observation": "string",
-          "consistency": "string - percentage of samples with same result",
-          "confidence": "string - none | low | medium | high",
-          "weight": "integer - contribution to total score"
+    "probeReport": {
+      "type": "object",
+      "required": ["schema_version", "meta", "summary", "tests"],
+      "properties": {
+        "schema_version": {"const": "2.0"},
+        "meta": {
+          "type": "object",
+          "required": ["run_id", "target", "timestamp", "tool", "version", "profile", "samples"],
+          "properties": {
+            "run_id": {"type": "string", "format": "uuid"},
+            "target": {"type": "string"},
+            "timestamp": {"type": "string", "format": "date-time"},
+            "tool": {"const": "dpi-probe"},
+            "version": {"type": "string"},
+            "profile": {"type": ["string", "null"]},
+            "samples": {"type": "integer", "minimum": 1}
+          },
+          "additionalProperties": true
         },
-        "ttl_suppression": {
-          "observation": "string",
-          "confidence": "string",
-          "weight": "integer"
+        "summary": {
+          "type": "object",
+          "required": ["assessment", "dpi_detected", "confidence", "signals", "findings", "limitations"],
+          "properties": {
+            "assessment": {"enum": ["insufficient_data", "inconclusive", "content_dependent_behavior_observed", "content_dependent_interference_observed"]},
+            "dpi_detected": {"type": "null"},
+            "confidence": {"enum": ["none", "low", "moderate", "high"]},
+            "signals": {"type": "object", "additionalProperties": {"$ref": "#/$defs/signal"}},
+            "findings": {"type": "array", "items": {"type": "string"}},
+            "limitations": {"type": "array", "items": {"type": "string"}}
+          },
+          "additionalProperties": true
         },
-        "rst_timing": {
-          "observation": "string",
-          "confidence": "string",
-          "weight": "integer"
-        },
-        "tls_parser": {
-          "observation": "string",
-          "confidence": "string",
-          "weight": "integer"
-        }
+        "tests": {"type": "object"}
       },
-      "findings": "array of strings - human-readable observations"
+      "additionalProperties": true
     },
-    "tests": {
-      "tcp_443": {
-        "status": "string - open | timeout | error",
-        "rtt_ms": "number | null"
+    "tunnelDiagnosis": {
+      "type": "object",
+      "required": ["schema_version", "timestamp", "environment", "endpoint", "config", "log", "pcap", "clash_api", "active_checks", "data_needed_for_localization"],
+      "properties": {
+        "schema_version": {"const": "1.0"},
+        "timestamp": {"type": "string", "format": "date-time"},
+        "environment": {"type": "object"},
+        "endpoint": {"type": ["string", "null"]},
+        "config": {"type": ["object", "null"]},
+        "log": {"type": ["object", "null"]},
+        "pcap": {"type": ["object", "null"]},
+        "clash_api": {"type": ["object", "null"]},
+        "active_checks": {"type": ["object", "null"]},
+        "data_needed_for_localization": {"type": "array", "items": {"type": "string"}}
       },
-      "http": {
-        "status": "string - ok | redirect | blocked | error"
+      "additionalProperties": true
+    },
+    "dualPcapAnalysis": {
+      "type": "object",
+      "required": ["assessment", "endpoint", "resolved_addresses", "client_packet_count", "server_packet_count", "forward_payload_packets_missing_at_server", "reverse_payload_packets_missing_at_client", "server_to_client_resets_seen_only_at_client", "server_to_client_resets_seen_at_server", "client_streams", "server_streams", "limitations"],
+      "properties": {
+        "assessment": {"type": "string"},
+        "endpoint": {"type": "string"},
+        "resolved_addresses": {"type": "array", "items": {"type": "string"}},
+        "client_packet_count": {"type": "integer", "minimum": 0},
+        "server_packet_count": {"type": "integer", "minimum": 0},
+        "forward_payload_packets_missing_at_server": {"type": "integer", "minimum": 0},
+        "reverse_payload_packets_missing_at_client": {"type": "integer", "minimum": 0},
+        "server_to_client_resets_seen_only_at_client": {"type": "integer", "minimum": 0},
+        "server_to_client_resets_seen_at_server": {"type": "integer", "minimum": 0},
+        "client_streams": {"type": "array", "items": {"type": "object"}},
+        "server_streams": {"type": "array", "items": {"type": "object"}},
+        "limitations": {"type": "array", "items": {"type": "string"}}
       },
-      "sni": "array of SNI test results per domain",
-      "ttl": "TTL hop analysis results",
-      "rst": "RST origin fingerprinting results",
-      "malformed_tls": "array of malformed ClientHello test results"
+      "additionalProperties": true
     }
   }
 }

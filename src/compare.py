@@ -1,13 +1,14 @@
 import json
-import sys
 
 def load_report(path: str) -> dict:
     try:
-        with open(path, "r") as f:
-            return json.load(f)
-    except Exception as e:
-        print(f"[!] Failed to load {path}: {e}")
-        sys.exit(1)
+        with open(path, "r", encoding="utf-8") as f:
+            result = json.load(f)
+    except (OSError, ValueError) as exc:
+        raise ValueError(f"Failed to load report {path}: {exc}") from exc
+    if not isinstance(result, dict):
+        raise ValueError('A report must contain a JSON object')
+    return result
 
 def compare_sni(a: list, b: list) -> list:
     changes = []
@@ -77,8 +78,8 @@ def compare_signals(a: dict, b: dict) -> list:
     all_signals = set(a.keys()) | set(b.keys())
 
     for signal in sorted(all_signals):
-        a_conf = a.get(signal, {}).get("confidence", "missing")
-        b_conf = b.get(signal, {}).get("confidence", "missing")
+        a_conf = a.get(signal, {}).get("strength", a.get(signal, {}).get("confidence", "missing"))
+        b_conf = b.get(signal, {}).get("strength", b.get(signal, {}).get("confidence", "missing"))
 
         if a_conf != b_conf:
             changes.append({
@@ -95,7 +96,7 @@ def compare_rst(a: dict, b: dict) -> list:
     a_ratio = a.get("ratio")
     b_ratio = b.get("ratio")
 
-    if a_ratio and b_ratio:
+    if a_ratio is not None and b_ratio is not None:
         diff = abs(a_ratio - b_ratio)
         if diff > 0.3:
             changes.append({
@@ -122,6 +123,25 @@ def compare_rst(a: dict, b: dict) -> list:
 def run(path_a: str, path_b: str):
     report_a = load_report(path_a)
     report_b = load_report(path_b)
+    if any('diagnosis' not in item and ('meta' not in item or 'summary' not in item) for item in (report_a, report_b)):
+        raise ValueError('Compare two detailed probe reports or tunnel diagnoses; standalone quick/ECH/capture results use different formats.')
+    if "diagnosis" in report_a or "diagnosis" in report_b:
+        if "diagnosis" not in report_a or "diagnosis" not in report_b:
+            raise ValueError("compare two tunnel diagnoses or two probe reports, not mixed types")
+        if report_a.get("endpoint") != report_b.get("endpoint"):
+            print("[!] Endpoints differ: this is not an isolated network-path comparison.")
+        changes = []
+        codes_a = {f["code"] for f in report_a["diagnosis"]["findings"]}
+        codes_b = {f["code"] for f in report_b["diagnosis"]["findings"]}
+        for code in sorted(codes_a ^ codes_b):
+            changes.append({"signal": code, "before": code in codes_a, "after": code in codes_b, "type": "diagnosis_change"})
+        print("[*] Tunnel diagnosis comparison (finding presence only)")
+        for change in changes:
+            print(f"    {change['signal']}: {change['before']} -> {change['after']}")
+        if not changes:
+            print("    No change in finding codes; raw counts and timings may still differ.")
+        print("    Keep server, credentials and client version constant; match reproduction windows before attributing a difference to the network.")
+        return changes
 
     meta_a = report_a.get("meta", {})
     meta_b = report_b.get("meta", {})
@@ -138,15 +158,18 @@ def run(path_a: str, path_b: str):
     all_changes = []
 
     # SNI
-    sni_changes = compare_sni(tests_a.get("sni", []), tests_b.get("sni", []))
+    def rows(tests, name):
+        value = tests.get(name)
+        return value if isinstance(value, list) else []
+    sni_changes = compare_sni(rows(tests_a, "sni"), rows(tests_b, "sni"))
     all_changes += sni_changes
 
     # IP blocking
-    ip_changes = compare_ip_blocking(tests_a.get("ip_blocking", []), tests_b.get("ip_blocking", []))
+    ip_changes = compare_ip_blocking(rows(tests_a, "ip_blocking"), rows(tests_b, "ip_blocking"))
     all_changes += ip_changes
 
     # HTTP Host
-    http_changes = compare_http_host(tests_a.get("http_host", []), tests_b.get("http_host", []))
+    http_changes = compare_http_host(rows(tests_a, "http_host"), rows(tests_b, "http_host"))
     all_changes += http_changes
 
     # Signals
@@ -157,9 +180,9 @@ def run(path_a: str, path_b: str):
     rst_changes = compare_rst(tests_a.get("rst", {}), tests_b.get("rst", {}))
     all_changes += rst_changes
 
-    # Score
-    score_a = summary_a.get("score", "?")
-    score_b = summary_b.get("score", "?")
+    # Evidence assessment (with legacy score fallback)
+    assessment_a = summary_a.get("assessment", summary_a.get("score", "?"))
+    assessment_b = summary_b.get("assessment", summary_b.get("score", "?"))
     conf_a = summary_a.get("confidence", "?")
     conf_b = summary_b.get("confidence", "?")
 
@@ -170,7 +193,7 @@ def run(path_a: str, path_b: str):
     print(f"  COMPARISON REPORT")
     print("=" * 50)
     print(f"  Profile    : {profile_a} → {profile_b}")
-    print(f"  Score      : {score_a} → {score_b}")
+    print(f"  Assessment : {assessment_a} → {assessment_b}")
     print(f"  Confidence : {conf_a} → {conf_b}")
 
     if not all_changes:

@@ -1,7 +1,5 @@
 import subprocess
-import threading
 import time
-import json
 import os
 
 TSHARK_PATH = "tshark"
@@ -34,11 +32,13 @@ def list_interfaces():
             [tshark, "-D"],
             capture_output=True, text=True, timeout=10
         )
-        return result.stdout.strip().split("\n")
+        if result.returncode != 0:
+            return []
+        return [line for line in result.stdout.splitlines() if line.strip()]
     except Exception:
         return []
 
-def capture(target_ip: str, output_path: str, duration: int = 30, interface: str = None) -> dict:
+def capture(target_ip: str, output_path: str, duration: int = 30, interface: str = None, port: int = None) -> dict:
     """
     Run a tshark capture filtered to target IP for duration seconds.
     Returns capture metadata.
@@ -50,10 +50,11 @@ def capture(target_ip: str, output_path: str, duration: int = 30, interface: str
     if not interface:
         interface = "1"  # default first interface
 
+    capture_filter = f"host {target_ip}" + (f" and tcp port {port}" if port is not None else "")
     cmd = [
         tshark,
         "-i", interface,
-        "-f", f"host {target_ip}",
+        "-f", capture_filter,
         "-w", output_path,
         "-a", f"duration:{duration}",
         "-q",
@@ -63,7 +64,7 @@ def capture(target_ip: str, output_path: str, duration: int = 30, interface: str
 
     try:
         print(f"\n[*] PCAP capture starting - {duration}s on interface {interface}")
-        print(f"    Filter : host {target_ip}")
+        print(f"    Filter : {capture_filter}")
         print(f"    Output : {output_path}")
 
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=duration + 10)
@@ -186,37 +187,13 @@ def analyze(pcap_path: str, target_ip: str) -> dict:
                 "ttl": parts[5],
             })
 
-    suspicious_rst = []
-
-    for r in rst_anomalies:
-        flags = []
-
-        try:
-            if int(r["window"]) == 0:
-                flags.append("zero_window")
-        except Exception:
-            pass
-
-        try:
-            ttl = int(r["ttl"])
-
-            if ttl < 50 and ttl != 64:
-                flags.append("low_ttl")
-        except Exception:
-            pass
-
-        if flags:
-            r["flags"] = flags
-            suspicious_rst.append(r)
+    # A zero TCP window on RST and an apparently "low" received TTL are not
+    # anomalies by themselves. Preserve raw features and compare them with
+    # non-RST packets from the same source instead of applying fixed cutoffs.
 
     # Client -> Server TTL
     client_ttl_lines = run_tshark(
         f"tcp and ip.dst == {target_ip}",
-        ["-e", "ip.ttl"]
-    )
-
-    server_ttl_lines = run_tshark(
-        f"tcp and ip.src == {target_ip}",
         ["-e", "ip.ttl"]
     )
 
@@ -225,8 +202,8 @@ def analyze(pcap_path: str, target_ip: str) -> dict:
     for line in client_ttl_lines:
         try:
             client_ttls.append(int(line.strip()))
-        except Exception:
-            pass
+        except ValueError:
+            continue
 
     # Server -> Client TTL
     server_ttl_lines = run_tshark(
@@ -239,9 +216,9 @@ def analyze(pcap_path: str, target_ip: str) -> dict:
     for line in server_ttl_lines:
         try:
             server_ttls.append(int(line.strip()))
-        except Exception:
-            pass
-    
+        except ValueError:
+            continue
+
     rst_ttls = []
     rst_ttl_count = {}
 
@@ -250,13 +227,30 @@ def analyze(pcap_path: str, target_ip: str) -> dict:
             ttl = int(r["ttl"])
             rst_ttls.append(ttl)
             rst_ttl_count[ttl] = rst_ttl_count.get(ttl, 0) + 1
-        except Exception:
-            pass
+        except (KeyError, TypeError, ValueError):
+            continue
 
     ttl_breakdown = {
         "client_ttl": sorted(list(set(client_ttls))),
         "server_ttl": sorted(list(set(server_ttls))),
         "rst_ttl": sorted(list(set(rst_ttls))),
+    }
+
+    def inferred_hops(received_ttl):
+        for initial in (32, 64, 128, 255):
+            if received_ttl <= initial:
+                return {"assumed_initial_ttl": initial, "estimated_hops": initial - received_ttl}
+        return None
+
+    server_hop_estimates = [inferred_hops(ttl) for ttl in sorted(set(server_ttls))]
+    rst_hop_estimates = [inferred_hops(ttl) for ttl in sorted(set(rst_ttls))]
+    ttl_origin_comparison = {
+        "server_received_ttls": sorted(set(server_ttls)),
+        "rst_received_ttls": sorted(set(rst_ttls)),
+        "server_hop_estimates": server_hop_estimates,
+        "rst_hop_estimates": rst_hop_estimates,
+        "ttl_sets_differ": bool(server_ttls and rst_ttls and set(server_ttls) != set(rst_ttls)),
+        "limitation": "Hop estimates assume a common initial TTL and cannot prove packet origin.",
     }
 
     # RST sequence analysis
@@ -275,8 +269,8 @@ def analyze(pcap_path: str, target_ip: str) -> dict:
     for line in ttl_lines:
         try:
             ttls.append(int(line.strip()))
-        except Exception:
-            pass
+        except ValueError:
+            continue
     ttls = list(set(ttls))
 
     # TLS alerts
@@ -335,8 +329,8 @@ def analyze(pcap_path: str, target_ip: str) -> dict:
     for line in size_lines:
         try:
             sizes.append(int(line.strip()))
-        except Exception:
-            pass
+        except ValueError:
+            continue
 
     size_stats = {}
     if sizes:
@@ -356,8 +350,8 @@ def analyze(pcap_path: str, target_ip: str) -> dict:
     for line in timing_lines:
         try:
             deltas.append(float(line.strip()))
-        except Exception:
-            pass
+        except ValueError:
+            continue
 
     timing_stats = {}
     if deltas:
@@ -367,7 +361,7 @@ def analyze(pcap_path: str, target_ip: str) -> dict:
             "max_ms": max(deltas_ms),
             "avg_ms": round(sum(deltas_ms) / len(deltas_ms), 2),
         }
-    
+
     # Total packets
     total_lines = run_tshark(
         f"ip.addr == {target_ip}",
@@ -379,14 +373,17 @@ def analyze(pcap_path: str, target_ip: str) -> dict:
         "client_hellos": len(client_hellos),
         "client_hello_details": client_hellos,
         "rst_anomalies": len(rst_anomalies),
-        "suspicious_rst": suspicious_rst[:5],
+        "rst_feature_details": rst_anomalies[:20],
         "unique_rst_seqs": len(rst_seqs),
         "ttl_breakdown": ttl_breakdown,
         "rst_ttl_count": rst_ttl_count,
+        "ttl_origin_comparison": ttl_origin_comparison,
         "packet_sizes": size_stats,
         "timing": timing_stats,
         "total_packets": len(total_lines),
         "rst_packets": len(rst_packets),
+        "rst_with_target_source_ip": sum(1 for packet in rst_packets if packet.get("src") == target_ip),
+        "rst_with_other_source_ip": sum(1 for packet in rst_packets if packet.get("src") != target_ip),
         "rst_details": rst_packets,
         "tls_alerts": len(tls_alerts),
         "tls_alert_details": tls_alerts,
@@ -399,10 +396,12 @@ def analyze(pcap_path: str, target_ip: str) -> dict:
 
     print(f"    Total packets     : {analysis['total_packets']}", flush=True)
     print(f"    RST packets       : {analysis['rst_packets']}", flush=True)
+    print(f"      target source IP: {analysis['rst_with_target_source_ip']}", flush=True)
+    print(f"      other source IP : {analysis['rst_with_other_source_ip']}", flush=True)
     print(f"    TLS alerts        : {analysis['tls_alerts']}", flush=True)
     print(f"    RST TTL count     : {rst_ttl_count}", flush=True)
     print(f"    Retransmissions   : {analysis['retransmissions']}", flush=True)
-    print(f"    RST anomalies     : {analysis['rst_anomalies']}", flush=True)
+    print(f"    RST feature rows  : {analysis['rst_anomalies']}", flush=True)
     print(f"    Unique RST seqs   : {analysis['unique_rst_seqs']}", flush=True)
     print(f"    TTL breakdown     : client={ttl_breakdown['client_ttl']} server={ttl_breakdown['server_ttl']} rst={ttl_breakdown['rst_ttl']}", flush=True)
     print(f"    TTL values seen   : {analysis['ttl_values']}", flush=True)
